@@ -1,0 +1,60 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.bybitp2pbot.app",
+  "productName": "Bybit P2P Bot",
+  "copyright": "Copyright © 2024 Bybit P2P Bot",
+  "directories": {
+    "output": "release",
+    "buildResources": "build"
+  },
+  "files": [
+    "dist/**/*",
+    "node_modules/**/*",
+    "!node_modules/**/test/**",
+    "!node_modules/**/tests/**",
+    "!node_modules/**/*.md",
+    "!node_modules/**/LICENSE*"
+  ],
+  "extraResources": [
+    {
+      "from": "node_modules/better-sqlite3/prebuilds",
+      "to": "prebuilds",
+      "filter": ["**/*"]
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      },
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      }
+    ],
+    "artifactName": "${productName}-${version}-${arch}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": false,
+    "installerIcon": "./build/icon.ico",
+    "uninstallerIcon": "./build/icon.ico",
+    "installerHeaderIcon": "./build/icon.ico",
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Bybit P2P Bot"
+  },
+  "portable": {
+    "artifactName": "${productName}-${version}-portable.${ext}"
+  },
+  "asar": true,
+  "asarUnpack": [
+    "**/*.node"
+  ],
+  "electronDownload": {
+    "cache": ".cache/electron"
+  }
+}

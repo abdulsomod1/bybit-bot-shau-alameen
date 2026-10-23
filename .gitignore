@@ -1,0 +1,14 @@
+node_modules/
+dist/
+release/
+*.log
+.env
+.env.local
+.env.production
+.DS_Store
+.vscode/
+.idea/
+*.tsbuildinfo
+.cache/
+*.db
+!</.gitkeep

@@ -1,0 +1,50 @@
+# ============================================================
+# BYBIT P2P BOT — Render Blueprint
+# Deploy both the API server and the React frontend to Render.
+#
+# Deploy:
+#   1. Push this repo to GitHub.
+#   2. Go to https://render.com → Blueprints → New Blueprint Instance.
+#   3. Connect your GitHub repo.
+#   4. Set the required environment variables.
+# ============================================================
+services:
+  # ---------- API SERVER ----------
+  - name: bybit-p2p-api
+    plan: starter
+    region: oregon
+    runtime: node
+    buildCommand: npm install && npm run build:renderer && npm run build:server
+    startCommand: node dist/server/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: RENDER_SERVICE_ENCRYPTION_KEY
+        sync: false
+
+  # ---------- FRONTEND (served as static files) ----------
+  # The Express server serves the built React app from /dist/renderer/
+  # No separate frontend service is needed — it is served by the API server.
+  #
+  # If you want a separate CDN-hosted frontend (e.g., Cloudflare Pages):
+  #   Build command: npm install && npm run build:renderer
+  #   Publish directory: dist/renderer
+  #   Then update vite.config.ts to set base to your CDN URL.
+  # For this project, the Express server handles both API and static file serving.
+
+# NOTES:
+# - The bot worker runs inside the Express server (bybit-p2p-api).
+# - No separate Background Worker is needed since the polling loop
+#   runs as a managed setInterval inside the Express process.
+# - Render free tier: 750 hours/month. The API service will consume
+#   ~720 hours if it runs continuously. Use the paid plan for reliability.
+# - For production, use Render Starter ($7/month) or higher for always-on.

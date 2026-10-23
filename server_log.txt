@@ -1,0 +1,13 @@
+
+🚀 Bybit P2P API server running on port 3000
+   Mode: development
+   Health: http://localhost:3000/health
+   Debug:  http://localhost:3000/debug
+
+[Bootstrap] Trying to create guest user rows...
+[Bootstrap] users: OK
+[Bootstrap] profiles: OK
+[Bootstrap] bot_settings: OK
+[Bootstrap] bot_state: OK
+[Bootstrap] api_credentials: OK
+[Bot Worker] Starting — interval: 60s

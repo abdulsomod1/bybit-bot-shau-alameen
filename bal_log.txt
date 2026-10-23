@@ -1,0 +1,34 @@
+=== Build & Launch ===
+Root: C:\bot
+
+[build:main] EXEC: npx tsc -p tsconfig.main.json
+[build:main] OK
+
+
+[build:preload] EXEC: npx tsc -p src\preload\tsconfig.json
+[build:preload] OK
+
+
+Check: main.js=true preload.js=true
+
+[Step 4] Starting Vite dev server...
+Vite started. Waiting 12s...
+  waiting ... 12s
+  waiting ... 11s
+  waiting ... 10s
+  waiting ... 9s
+  waiting ... 8s
+  waiting ... 7s
+  waiting ... 6s
+  waiting ... 5s
+  waiting ... 4s
+  waiting ... 3s
+  waiting ... 2s
+  waiting ... 1s
+
+[Step 5] Starting Electron...
+Electron started (PID written above if visible).
+
+=== DONE - Bot should be running ===
+Vite: http://localhost:5173
+Check desktop for Electron window
