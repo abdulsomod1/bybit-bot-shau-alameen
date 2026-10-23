@@ -14,9 +14,10 @@ services:
     plan: starter
     region: oregon
     runtime: node
-    buildCommand: npm install && npm run build:renderer && npm run build:server
+    buildCommand: npm install && npm run build:server
     startCommand: node dist/server/index.js
     healthCheckPath: /health
+    autoDeploy: true
     envVars:
       - key: NODE_ENV
         value: production
