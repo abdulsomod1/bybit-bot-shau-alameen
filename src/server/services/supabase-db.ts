@@ -21,11 +21,30 @@ export const supabaseAdmin: SupabaseClient = createClient(
 
 function getKey(): Buffer {
   const k = process.env.RENDER_SERVICE_ENCRYPTION_KEY;
-  if (!k || k.length !== 64)
+  const REQUIRED_LENGTH = 64;
+  
+  if (!k) {
     throw new Error(
-      'RENDER_SERVICE_ENCRYPTION_KEY must be 64 hex chars. ' +
-      'Generate: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"',
+      'RENDER_SERVICE_ENCRYPTION_KEY is missing. ' +
+      'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"',
     );
+  }
+  
+  if (k.length !== REQUIRED_LENGTH) {
+    throw new Error(
+      `RENDER_SERVICE_ENCRYPTION_KEY must be ${REQUIRED_LENGTH} hex chars (you provided ${k.length}). ` +
+      'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"',
+    );
+  }
+  
+  // Validate that it's valid hex
+  if (!/^[a-fA-F0-9]+$/.test(k)) {
+    throw new Error(
+      'RENDER_SERVICE_ENCRYPTION_KEY must contain only hexadecimal characters (a-f, A-F, 0-9). ' +
+      'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"',
+    );
+  }
+  
   return Buffer.from(k, 'hex');
 }
 
