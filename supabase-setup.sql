@@ -253,9 +253,59 @@ CREATE POLICY "Users can delete logs" ON public.activity_logs FOR DELETE USING (
 
 
 -- ============================================================
+-- HELPER FUNCTIONS (bypass RLS for server-side operations)
+-- ============================================================
+
+-- Function to save credentials (bypasses RLS via SECURITY DEFINER)
+CREATE OR REPLACE FUNCTION public.save_api_credentials(
+    p_user_id UUID,
+    p_api_key TEXT,
+    p_api_key_masked TEXT,
+    p_api_secret_encrypted TEXT,
+    p_api_secret_iv TEXT,
+    p_has_credentials BOOLEAN,
+    p_registered_ip TEXT
+) RETURNS void AS $$
+BEGIN
+    INSERT INTO public.api_credentials (id, user_id, api_key, api_key_masked, api_secret_encrypted, api_secret_iv, has_credentials, registered_ip)
+    VALUES (uuid_generate_v4(), p_user_id, p_api_key, p_api_key_masked, p_api_secret_encrypted, p_api_secret_iv, p_has_credentials, p_registered_ip)
+    ON CONFLICT (user_id) DO UPDATE SET
+        api_key = EXCLUDED.api_key,
+        api_key_masked = EXCLUDED.api_key_masked,
+        api_secret_encrypted = EXCLUDED.api_secret_encrypted,
+        api_secret_iv = EXCLUDED.api_secret_iv,
+        has_credentials = EXCLUDED.has_credentials,
+        registered_ip = EXCLUDED.registered_ip,
+        updated_at = NOW();
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Grant execute on helper functions
+GRANT EXECUTE ON FUNCTION public.save_api_credentials TO service_role;
+
+-- Function to add activity log (bypasses RLS)
+CREATE OR REPLACE FUNCTION public.add_activity_log(
+    p_user_id UUID,
+    p_level TEXT,
+    p_category TEXT,
+    p_message TEXT,
+    p_details TEXT DEFAULT NULL,
+    p_ad_id TEXT DEFAULT NULL,
+    p_previous_value TEXT DEFAULT NULL,
+    p_new_value TEXT DEFAULT NULL
+) RETURNS void AS $$
+BEGIN
+    INSERT INTO public.activity_logs (id, user_id, level, category, message, details, ad_id, previous_value, new_value)
+    VALUES (uuid_generate_v4(), p_user_id, p_level, p_category, p_message, p_details, p_ad_id, p_previous_value, p_new_value);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION public.add_activity_log TO service_role;
+
+-- ============================================================
 -- SERVICE ROLE BYPASS (server-side operations)
 -- ============================================================
-CREATE POLICY "SR all on api_credentials" ON public.api_credentials FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role can do everything on api_credentials" ON public.api_credentials FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE POLICY "SR all on pricing_rules" ON public.pricing_rules FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE POLICY "SR all on ads" ON public.ads FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE POLICY "SR all on competitor_rankings" ON public.competitor_rankings FOR ALL TO service_role USING (true) WITH CHECK (true);

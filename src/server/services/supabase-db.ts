@@ -128,45 +128,17 @@ export async function saveCredentials(
   const { encrypted, iv } = encrypt(apiSecret);
   const masked = maskApiKey(apiKey);
 
-  // Check if credentials row already exists
-  const { data: existing } = await supabaseAdmin
-    .from('api_credentials')
-    .select('id')
-    .eq('user_id', userId)
-    .maybeSingle();
-
-  if (existing) {
-    // Update existing credentials
-    const { error } = await supabaseAdmin
-      .from('api_credentials')
-      .update({
-        api_key: apiKey,
-        api_key_masked: masked,
-        api_secret_encrypted: encrypted,
-        api_secret_iv: iv,
-        has_credentials: true,
-        registered_ip: registeredIp,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('user_id', userId);
-    if (error) throw new Error(`saveCredentials update: ${error.message}`);
-  } else {
-    // Insert new credentials
-    const { error } = await supabaseAdmin
-      .from('api_credentials')
-      .insert({
-        user_id: userId,
-        api_key: apiKey,
-        api_key_masked: masked,
-        api_secret_encrypted: encrypted,
-        api_secret_iv: iv,
-        has_credentials: true,
-        registered_ip: registeredIp,
-      });
-    if (error && error.code !== '23505') {
-      throw new Error(`saveCredentials insert: ${error.message}`);
-    }
-  }
+  // Use SECURITY DEFINER function to bypass RLS
+  const { error } = await supabaseAdmin.rpc('save_api_credentials', {
+    p_user_id: userId,
+    p_api_key: apiKey,
+    p_api_key_masked: masked,
+    p_api_secret_encrypted: encrypted,
+    p_api_secret_iv: iv,
+    p_has_credentials: true,
+    p_registered_ip: registeredIp,
+  });
+  if (error) throw new Error(`saveCredentials: ${error.message}`);
 }
 
 /** Delete credentials. Used by API route. */
