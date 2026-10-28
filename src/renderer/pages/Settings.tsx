@@ -1,6 +1,7 @@
 
 import { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
+import { getOwnerToken, setOwnerToken } from '../lib/api-client';
 
 type TestResult = {
   error?: string;
@@ -14,8 +15,32 @@ export default function Settings() {
     settings,
     saveCredentials,
     saveSettings,
+    fetchAll,
   } = useApi();
 
+  // ── Owner Access Token ──────────────────────────────────────────────────────
+  const [ownerToken, setOwnerTokenLocal] = useState(getOwnerToken());
+  const [tokenSaved, setTokenSaved] = useState(false);
+  const [tokenError, setTokenError] = useState('');
+
+  const saveToken = () => {
+    setTokenError('');
+    if (!ownerToken.trim()) {
+      setTokenError('Token cannot be empty.');
+      return;
+    }
+    setOwnerToken(ownerToken.trim());
+    setTokenSaved(true);
+    setTimeout(() => setTokenSaved(false), 3000);
+  };
+
+  const clearToken = () => {
+    setOwnerToken('');
+    setOwnerTokenLocal('');
+    window.location.reload();
+  };
+
+  // ── API Key / Secret ────────────────────────────────────────────────────────
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
   const [saved, setSaved] = useState(false);
@@ -128,13 +153,14 @@ export default function Settings() {
         pollingIntervalMs: pollingInterval * 1000,
       });
 
-      if (result?.success === false) {
+      if (result && (result as any).error) {
         setSettingsMessage(
           'Settings could not be saved: ' +
-          (result?.error || 'Unknown error')
+          ((result as any).error || 'Unknown error')
         );
       } else {
         setSettingsMessage('Settings saved successfully.');
+        fetchAll?.();
       }
     } catch (error) {
       console.error('Saving settings failed:', error);
@@ -201,6 +227,43 @@ export default function Settings() {
 
   return (
     <div className="space-y-6 max-w-2xl">
+      {/* ── Owner Access Token Setup ───────────────────────────────────────── */}
+      {!ownerToken && (
+        <div className="card border-l-4" style={{ borderColor: 'var(--warning)' }}>
+          <h3 className="font-semibold mb-2 flex items-center gap-2">
+            🔐 Owner Access Token Required
+          </h3>
+          <p className="text-sm mb-3" style={{ color: 'var(--text-secondary)' }}>
+            To access the dashboard, set your Owner Access Token. This protects the API from unauthorized access.
+            Set it in your Render dashboard environment variables (<code>OWNER_ACCESS_TOKEN</code>), then enter it below.
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              className="input flex-1"
+              placeholder="Enter your Owner Access Token"
+              value={ownerToken}
+              onChange={(e) => { setOwnerTokenLocal(e.target.value); setTokenError(''); }}
+              onKeyDown={(e) => e.key === 'Enter' && saveToken()}
+            />
+            <button onClick={saveToken} className="btn btn-primary">Save Token</button>
+          </div>
+          {tokenError && <p className="text-xs mt-1" style={{ color: 'var(--error)' }}>{tokenError}</p>}
+          {tokenSaved && <p className="text-xs mt-1" style={{ color: 'var(--success)' }}>Token saved! The page will reload.</p>}
+        </div>
+      )}
+
+      {/* ── Change Token (when one is already set) ─────────────────────────── */}
+      {ownerToken && (
+        <div className="card">
+          <h3 className="font-semibold mb-2">🔐 Owner Access Token</h3>
+          <div className="flex gap-2 items-center">
+            <span className="text-sm" style={{ color: 'var(--success)' }}>✓ Token is configured</span>
+            <button onClick={clearToken} className="btn btn-ghost text-xs ml-auto">Change Token</button>
+          </div>
+        </div>
+      )}
+
       <div>
         <h2 className="text-2xl font-bold">Settings</h2>
         <p

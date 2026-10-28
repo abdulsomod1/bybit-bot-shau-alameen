@@ -3,8 +3,13 @@
 -- ============================================================
 create extension if not exists "uuid-ossp";
 
+-- ============================================================
+-- FIXED BOT OWNER (SINGLE USER — NOT Supabase Auth)
+-- The bot uses this UUID for all database records.
+-- ============================================================
+
 -- USERS (local app users — NOT Supabase Auth)
--- This table holds all app users. Single-user desktop app uses a fixed GUEST_USER_ID.
+-- This table holds all app users. Single-user desktop app uses a fixed BOT_OWNER_ID.
 create table if not exists public.users (
   id uuid primary key default uuid_generate_v4(),
   email text,
@@ -12,6 +17,14 @@ create table if not exists public.users (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Create the fixed owner record
+DO $$
+BEGIN
+  INSERT INTO public.users (id, email, name)
+  VALUES ('00000000-0000-4000-8000-000000000001', 'bot@owner.local', 'Bot Owner')
+  ON CONFLICT (id) DO NOTHING;
+END $$;
 
 -- PROFILES (extends users)
 create table if not exists public.profiles (
@@ -228,5 +241,59 @@ grant select, insert, update, delete on all tables in schema public to authentic
 -- 2. RLS policies are permissive (service role bypasses RLS in server middleware).
 --    This is a single-user desktop app using SERVICE_ROLE_KEY directly.
 -- 3. public.users is the user table (NOT auth.users) for this app.
--- 4. GUEST_USER_ID env var controls the single desktop app user.
+-- 4. BOT_OWNER_ID constant (00000000-0000-4000-8000-000000000001) is used for all DB operations.
+--    No GUEST_USER_ID env var — the owner UUID is hardcoded in server code.
 -- ============================================================
+
+-- UNIQUE indexes — needed for upserts to work with ON CONFLICT
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_credentials_user_id ON public.api_credentials(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pricing_rules_user_id ON public.pricing_rules(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ads_user_id ON public.ads(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_competitor_rankings_user_id ON public.competitor_rankings(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_activity_logs_user_id ON public.activity_logs(user_id);
+
+-- ============================================================
+-- SECURE CREDENTIAL STORAGE RPC FUNCTION
+-- SECURITY DEFINER + SET search_path = public prevents privilege escalation.
+-- service_role bypasses RLS; this function enforces owner-level access.
+-- Called ONLY from the Express server — API secret never touches the browser.
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.save_api_credentials(
+  p_user_id              UUID,
+  p_api_key              TEXT,
+  p_api_key_masked       TEXT,
+  p_api_secret_encrypted TEXT,
+  p_api_secret_iv        TEXT,
+  p_has_credentials      BOOLEAN,
+  p_registered_ip        TEXT
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.api_credentials (
+    user_id, api_key, api_key_masked,
+    api_secret_encrypted, api_secret_iv,
+    has_credentials, registered_ip, updated_at
+  )
+  VALUES (
+    p_user_id, p_api_key, p_api_key_masked,
+    p_api_secret_encrypted, p_api_secret_iv,
+    p_has_credentials, p_registered_ip, NOW()
+  )
+  ON CONFLICT (user_id) DO UPDATE SET
+    api_key              = EXCLUDED.api_key,
+    api_key_masked       = EXCLUDED.api_key_masked,
+    api_secret_encrypted = EXCLUDED.api_secret_encrypted,
+    api_secret_iv        = EXCLUDED.api_secret_iv,
+    has_credentials      = EXCLUDED.has_credentials,
+    registered_ip        = EXCLUDED.registered_ip,
+    updated_at           = NOW();
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.save_api_credentials(
+  UUID, TEXT, TEXT, TEXT, TEXT, BOOLEAN, TEXT
+) TO service_role;

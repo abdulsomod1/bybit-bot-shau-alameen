@@ -1,5 +1,7 @@
 // src/server/routes/api-handlers.ts
 // All authenticated API handler implementations.
+// The owner access token is verified in middleware before these run.
+// req.userId is always the bot owner's fixed UUID.
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { supabaseAdmin } from '../services/supabase-db.js';
 import { getCredMeta, saveCredentials, deleteCredentials } from '../services/supabase-db.js';
@@ -11,14 +13,13 @@ import {
   getLogs, clearLogs,
   getBotState, updateBotState,
 } from '../services/db-helpers.js';
-import { getBybitAds } from '../services/bybit-api.js';
+import { getBybitAds, testBybitConnection } from '../services/bybit-api.js';
 
 function ok(res: any, data: any) { res.json(data); }
 
 function err(res: any, e: unknown, fallback = 'Request failed (500)') {
   const msg = e instanceof Error ? e.message : fallback;
   console.error('[API Error]', msg);
-  // Return 500 for server errors, 400 for client errors
   const status = e instanceof Error && e.message.includes('required') ? 400 : 500;
   res.status(status).json({ error: msg });
 }
@@ -64,8 +65,17 @@ export async function handleTestConnection(req: AuthenticatedRequest, res: any) 
   if (!apiKey || !apiSecret) {
     return res.status(400).json({ error: 'apiKey and apiSecret are required' });
   }
-  try { ok(res, await getBybitAds({ apiKey, apiSecret })); }
-  catch (e) { err(res, e, 'Connection test failed'); }
+  try {
+    const result = await testBybitConnection(apiKey, apiSecret);
+    res.json({
+      success: result.success,
+      apiKeyPrefix: result.apiKeyPrefix ?? '',
+      error: result.error,
+      errorCode: result.errorCode,
+    });
+  } catch (e) {
+    err(res, e, 'Connection test failed');
+  }
 }
 
 // ── Ads ────────────────────────────────────────────────────────────────────────

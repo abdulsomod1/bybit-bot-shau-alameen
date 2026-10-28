@@ -1,20 +1,22 @@
 # ============================================================
 # BYBIT P2P BOT — Render Blueprint
-# Deploy both the API server and the React frontend to Render.
+# Deploy the API server with embedded React frontend.
 #
 # Deploy:
 #   1. Push this repo to GitHub.
 #   2. Go to https://render.com → Blueprints → New Blueprint Instance.
 #   3. Connect your GitHub repo.
-#   4. Set the required environment variables.
+#   4. Set the required environment variables (see below).
 # ============================================================
 services:
-  # ---------- API SERVER ----------
+  # ── API + FRONTEND ────────────────────────────────────────────
+  # Express serves both the API and the built React frontend.
+  # The React app is built first (npm run build), then Express starts.
   - name: bybit-p2p-api
     plan: starter
     region: oregon
     runtime: node
-    buildCommand: npm install && npm run build:server
+    buildCommand: npm install && npm run build
     startCommand: node dist/server/index.js
     healthCheckPath: /health
     autoDeploy: true
@@ -23,24 +25,28 @@ services:
         value: production
       - key: PORT
         value: 3000
+      # ── Supabase ─────────────────────────────────────────────
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      # ── Encryption (64 hex chars = 32 bytes AES-256-GCM key) ──
       - key: RENDER_SERVICE_ENCRYPTION_KEY
         sync: false
-
-  # ---------- FRONTEND (served as static files) ----------
-  # The Express server serves the built React app from /dist/renderer/
-  # No separate frontend service is needed — it is served by the API server.
-  #
-  # If you want a separate CDN-hosted frontend (e.g., Cloudflare Pages):
-  #   Build command: npm install && npm run build:renderer
-  #   Publish directory: dist/renderer
-  #   Then update vite.config.ts to set base to your CDN URL.
-  # For this project, the Express server handles both API and static file serving.
+      # ── Owner Access Token (REQUIRED) ─────────────────────────
+      # Generate: node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+      # Set in Render dashboard. Keep this secret!
+      - key: OWNER_ACCESS_TOKEN
+        sync: false
+      # ── Dev fallback token (optional, for local testing) ──────
+      # Only used when NODE_ENV !== production
+      - key: OWNER_ACCESS_TOKEN_DEV
+        sync: false
+      # ── Bot worker polling interval (ms) ─────────────────────
+      - key: BOT_POLL_INTERVAL
+        value: 60000
 
 # NOTES:
 # - The bot worker runs inside the Express server (bybit-p2p-api).
@@ -49,3 +55,5 @@ services:
 # - Render free tier: 750 hours/month. The API service will consume
 #   ~720 hours if it runs continuously. Use the paid plan for reliability.
 # - For production, use Render Starter ($7/month) or higher for always-on.
+# - OWNER_ACCESS_TOKEN: REQUIRED. Without it, all API calls return 401.
+

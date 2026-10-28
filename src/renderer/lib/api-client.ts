@@ -1,12 +1,33 @@
 // src/renderer/lib/api-client.ts
-// HTTP API client — single-user desktop app, no JWT needed.
-// All calls go to the local/remote Express API server.
-const BASE = '/api';
+// HTTP API client for the web/electron renderer.
+// All requests go to the Express API server (same-origin in production).
+// Owner access token is required for all endpoints (stored in localStorage).
+const BASE = (window as any).__API_BASE__ ?? '/api';
+
+/** Get the stored owner access token from localStorage */
+export function getOwnerToken(): string {
+  return localStorage.getItem('owner_access_token') ?? '';
+}
+
+/** Store the owner access token in localStorage */
+export function setOwnerToken(token: string): void {
+  if (token) localStorage.setItem('owner_access_token', token);
+  else localStorage.removeItem('owner_access_token');
+}
+
+/** Clear the stored owner access token */
+export function clearOwnerToken(): void {
+  localStorage.removeItem('owner_access_token');
+}
 
 async function request<T>(
   method: string, path: string, body?: unknown,
 ): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+
+  // Include the owner access token (required for all API endpoints)
+  const token = getOwnerToken();
+  if (token) headers['X-Owner-Access-Token'] = token;
 
   const res = await fetch(`${BASE}${path}`, {
     method,

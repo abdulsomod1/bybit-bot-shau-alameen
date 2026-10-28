@@ -10,39 +10,65 @@ import { initializeBotWorker } from './services/bot-worker.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const IS_PROD = process.env.NODE_ENV === 'production';
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
-const GUEST_USER_ID = process.env.GUEST_USER_ID ?? 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
 
-// ── Bootstrap: ensure guest user rows exist ────────────────────────────────────
-async function ensureGuestRows() {
-  console.log('[Bootstrap] Trying to create guest user rows...');
+// ── Fixed bot owner UUID (matches the DB owner record) ─────────────────────────
+const BOT_OWNER_ID = '00000000-0000-4000-8000-000000000001';
 
-  // FIRST: ensure the guest user exists in public.users (NOT auth.users)
+// ── Bootstrap: ensure owner rows exist ──────────────────────────────────────────
+async function ensureOwnerRows() {
+  console.log('[Bootstrap] Ensuring owner user record...');
+
+  // Ensure the owner user exists in public.users (created with correct UUID)
   const userResult = await supabaseAdmin.from('users').upsert(
-    { id: GUEST_USER_ID, email: 'guest@local.app', name: 'Local Guest' },
+    { id: BOT_OWNER_ID, email: 'bot@owner.local', name: 'Bot Owner' },
     { onConflict: 'id' }
   );
   if (userResult.error) {
-    console.error('[Bootstrap] users:', userResult.error.message);
+    console.error('[Bootstrap] users upsert:', userResult.error.message);
   } else {
     console.log('[Bootstrap] users: OK');
   }
 
-  const tables = ['profiles', 'bot_settings', 'bot_state', 'api_credentials'];
-  for (const table of tables) {
+  // Ensure all owner-related rows exist — each table uses the correct onConflict target
+  const tables: Array<{ name: string; data: Record<string, unknown>; conflictCol: string }> = [
+    {
+      name: 'profiles',
+      data: { id: BOT_OWNER_ID, display_name: 'Bot Owner' },
+      conflictCol: 'id',
+    },
+    {
+      name: 'bot_settings',
+      data: { user_id: BOT_OWNER_ID, polling_interval_ms: 60000, theme: 'dark' },
+      conflictCol: 'user_id',
+    },
+    {
+      name: 'bot_state',
+      data: { user_id: BOT_OWNER_ID, status: 'stopped' },
+      conflictCol: 'user_id',
+    },
+    {
+      name: 'api_credentials',
+      data: { user_id: BOT_OWNER_ID, has_credentials: false },
+      conflictCol: 'user_id',
+    },
+  ];
+
+  for (const { name, data, conflictCol } of tables) {
     try {
-      const result = await supabaseAdmin.from(table).upsert(
-        table === 'bot_state' ? { user_id: GUEST_USER_ID, status: 'stopped' } :
-        table === 'profiles'  ? { id: GUEST_USER_ID, display_name: 'Local Guest' } :
-                                { user_id: GUEST_USER_ID },
-        { onConflict: table === 'profiles' ? 'id' : 'user_id', ignoreDuplicates: true }
-      );
+      const result = await supabaseAdmin.from(name).upsert(data, { onConflict: conflictCol });
       if (result.error) {
-        console.error(`[Bootstrap] ${table}:`, result.error.message);
+        // Unique index may not exist yet in older deployments — fall back to upsert
+        const fallback = await supabaseAdmin.from(name).upsert(data, { onConflict: conflictCol, ignoreDuplicates: true });
+        if (fallback.error) {
+          console.error(`[Bootstrap] ${name}:`, fallback.error.message);
+        } else {
+          console.log(`[Bootstrap] ${name}: OK`);
+        }
       } else {
-        console.log(`[Bootstrap] ${table}: OK`);
+        console.log(`[Bootstrap] ${name}: OK`);
       }
-    } catch (err: any) {
-      console.error(`[Bootstrap] ${table} ERROR:`, err.message);
+    } catch (err: unknown) {
+      console.error(`[Bootstrap] ${name} EXCEPTION:`, err instanceof Error ? err.message : String(err));
     }
   }
 }
@@ -57,13 +83,18 @@ app.use(express.urlencoded({ extended: true }));
 // CORS — allow the React frontend origin in dev, restrict in prod
 app.use((req: Request, res: Response, next: NextFunction) => {
   const origin = req.headers.origin;
-  const allowed = IS_PROD
-    ? ['https://bybit-p2p-api.onrender.com'] // replace with your Render URL
-    : ['http://localhost:5173', 'http://localhost:4173'];
-  if (!origin || allowed.includes(origin)) {
+  // Dev: Vite proxies /api to Express — but allow explicit localhost origins too
+  // Prod: same-origin (Express serves both API + static files)
+  if (!origin || !IS_PROD) {
     res.setHeader('Access-Control-Allow-Origin', origin ?? '*');
+  } else {
+    // Allow Render deploy URL if explicitly set (env var)
+    const allowedProd = (process.env.ALLOWED_ORIGIN ?? '').split(',').filter(Boolean);
+    if (allowedProd.includes(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+    }
   }
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Owner-Access-Token');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   if (req.method === 'OPTIONS') {
     res.sendStatus(200);
@@ -83,7 +114,8 @@ app.get('/debug', async (_req: Request, res: Response) => {
     timestamp: new Date().toISOString(),
     supabaseUrl: process.env.SUPABASE_URL ? 'SET' : 'MISSING',
     hasServiceRoleKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-    guestUserId: GUEST_USER_ID,
+    hasEncryptionKey: !!process.env.RENDER_SERVICE_ENCRYPTION_KEY,
+    botOwnerId: BOT_OWNER_ID,
     tables: {} as Record<string, any>,
   };
 
@@ -132,11 +164,11 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`   Health: http://localhost:${PORT}/health`);
   console.log(`   Debug:  http://localhost:${PORT}/debug\n`);
 
-  // Bootstrap guest user rows (auto-creates if not exist)
-  await ensureGuestRows().catch((e) => console.error('[Bootstrap] FATAL:', e.message));
+  // Bootstrap owner rows (auto-creates if not exist)
+  await ensureOwnerRows().catch((e) => console.error('[Bootstrap] FATAL:', e.message));
 
   // Start the bot worker
   initializeBotWorker();
 });
 
-export { app };
+export { app, BOT_OWNER_ID };

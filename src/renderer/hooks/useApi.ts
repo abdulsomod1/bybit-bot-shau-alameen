@@ -29,14 +29,18 @@ export function useApi() {
       const safe = (p: PromiseSettledResult<any>, fallback: any) =>
         p.status === 'fulfilled' ? p.value : fallback;
 
-      setStatus(safe(st, null));
-      setAds(safe(ad, []));
-      setRules(safe(rl, []));
-      setRankings(safe(rk, []));
-      setLogs(safe(lg, []));
-      setCredentials(safe(cr, { has_credentials: false }));
-      setSettings(safe(se, {}));
-      setBotState(safe(bs, null));
+      // Detect auth errors (401 = missing/invalid owner token)
+      const authError = (v: any) =>
+        v && typeof v === 'object' && (v.unauthorized || (v.error && v.error.includes('Unauthorized')));
+
+      setStatus(authError(safe(st, null)) ? null : safe(st, null));
+      setAds(authError(safe(ad, null)) ? [] : safe(ad, []));
+      setRules(authError(safe(rl, null)) ? [] : safe(rl, []));
+      setRankings(authError(safe(rk, null)) ? [] : safe(rk, []));
+      setLogs(authError(safe(lg, null)) ? [] : safe(lg, []));
+      setCredentials(authError(safe(cr, null)) ? { has_credentials: false, unauthorized: true } : (safe(cr, { has_credentials: false }) ?? { has_credentials: false }));
+      setSettings(authError(safe(se, null)) ? null : safe(se, null));
+      setBotState(authError(safe(bs, null)) ? null : safe(bs, null));
     } catch (e) {
       console.error('[useApi] fetchAll error', e);
     }
@@ -56,10 +60,9 @@ export function useApi() {
 
   const saveSettings = useCallback(
     async (data: Record<string, unknown>) => {
-      await apiSettings.save(data);
-      fetchAll();
+      return apiSettings.save(data);
     },
-    [fetchAll],
+    [],
   );
 
   const saveRule = useCallback(

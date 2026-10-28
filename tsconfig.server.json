@@ -15,5 +15,5 @@
     "noUnusedParameters": false
   },
   "include": ["src/server/**/*"],
-  "exclude": ["node_modules", "dist", "src/main", "src/renderer", "src/shared"]
+  "exclude": ["node_modules", "dist", "src/main", "src/preload", "src/renderer"]
 }

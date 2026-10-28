@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 // Shared types between main and renderer processes
 
 export interface ApiCredentials {
@@ -200,3 +202,4 @@ export interface RankingSnapshot {
   competitors: CompetitorAd[];
   snapshotTime: string;
 }
+

@@ -2,7 +2,7 @@
 // Route registrations for all authenticated API endpoints.
 // Handler implementations live in api-handlers.ts.
 import type { Express } from 'express';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireOwnerToken } from '../middleware/auth.js';
 import {
   handleGetSettings, handleSaveSettings,
   handleGetCredentials, handleSaveCredentials, handleDeleteCredentials, handleTestConnection,
@@ -13,8 +13,9 @@ import {
   handleGetBotState, handleUpdateBotState,
 } from './api-handlers.js';
 
+// Apply owner token check + set bot owner ID on all routes
 function auth(handler: any) {
-  return [requireAuth, handler];
+  return [requireOwnerToken, requireAuth, handler];
 }
 
 export function registerApiRoutes(app: Express) {

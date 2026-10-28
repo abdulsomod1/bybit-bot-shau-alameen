@@ -11,4 +11,8 @@ release/
 *.tsbuildinfo
 .cache/
 *.db
-!</.gitkeep
+!.gitkeep
+
+# Compiled outputs (never commit)
+src/shared/*.js
+src/lib/*.js

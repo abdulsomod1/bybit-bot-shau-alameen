@@ -1,8 +1,7 @@
 // src/server/services/bot-worker.ts
 // Background polling worker — runs inside the Express server process.
-// Polls Bybit P2P for each active user and adjusts prices per rules.
-import { supabaseAdmin } from './supabase-db.js';
-import { getAllActiveUserIds } from './db-helpers.js';
+// Single-user bot: only processes the bot owner's account.
+import { BOT_OWNER_ID } from '../middleware/auth.js';
 import {
   getRulesForWorker as getRules,
   getAdsForWorker as getAds,
@@ -13,35 +12,36 @@ import {
 import { fetchMarketAds, updateAdPrice } from './bybit-api.js';
 import { computeRankings, parsePrice, computeTargetPrice } from './bot-algorithms.js';
 
-const POLL_INTERVAL = parseInt(process.env.BOT_POLL_INTERVAL ?? '60000', 10);
+const POLL_INTERVAL = Math.max(10000, parseInt(process.env.BOT_POLL_INTERVAL ?? '60000', 10));
 let timer: ReturnType<typeof setInterval> | null = null;
+const OWNER_ID = BOT_OWNER_ID;
 
 // ── Per-user processing ───────────────────────────────────────────────────────
 
 async function processUser(userId: string): Promise<void> {
   const creds = await (await import('./supabase-db.js')).getCredentialsForBot(userId);
-  if (!creds) return;
+  if (!creds) return; // No credentials → skip (worker will report disconnected state)
 
   const { apiKey, apiSecret } = creds;
 
   try {
     // Load all data in parallel
     const [rules, ads] = await Promise.all([getRules(userId), getAds(userId)]);
-    const selectedAdIds = new Set(ads.filter((a) => a.is_selected).map((a) => a.id));
+    const selectedAdIds = new Set(ads.filter((a: any) => a.is_selected).map((a: any) => a.id));
     if (selectedAdIds.size === 0) return;
 
     for (const rule of rules) {
       if (!rule.enabled) continue;
 
       const direction = rule.direction?.toUpperCase() as 'BUY' | 'SELL';
-      const myAd = ads.find((a) => selectedAdIds.has(a.id) && a.direction?.toUpperCase() === direction);
+      const myAd = ads.find((a: any) => selectedAdIds.has(a.id) && a.direction?.toUpperCase() === direction);
       if (!myAd) continue;
 
       const side = direction === 'BUY' ? 'Sell' : 'Buy';
       const marketAds = await fetchMarketAds(
         { side, asset: rule.asset ?? 'USDT', fiatCurrency: rule.fiat_currency ?? 'USD' },
         apiKey, apiSecret,
-      ).catch((e) => { console.warn(`[Bot ${userId}] market fetch: ${e.message}`); return [] as any[]; });
+      ).catch((e: any) => { console.warn(`[Bot ${userId}] market fetch: ${e.message}`); return [] as any[]; });
 
       const ranking = computeRankings(marketAds, direction);
 
@@ -49,7 +49,7 @@ async function processUser(userId: string): Promise<void> {
       await saveRanking(userId, {
         market_key: `${direction}_${rule.asset}_${rule.fiat_currency}`,
         direction, asset: rule.asset, fiat_currency: rule.fiat_currency,
-        competitors: ranking.competitors.map((c) => ({ id: c.id, price: c.price })),
+        competitors: ranking.competitors.map((c: any) => ({ id: c.id, price: c.price })),
         first_ranked: ranking.first, second_ranked: ranking.second, third_ranked: ranking.third,
         last_refresh: new Date().toISOString(), data_stale: false,
       }).catch(() => {});
@@ -80,12 +80,12 @@ async function processUser(userId: string): Promise<void> {
   }
 }
 
-// ── Master poll loop ──────────────────────────────────────────────────────────
+// ── Master poll loop — single owner ─────────────────────────────────────────
 
 async function pollAll() {
   try {
-    const userIds = await getAllActiveUserIds(supabaseAdmin);
-    await Promise.allSettled(userIds.map(processUser));
+    // Single-user: only process the owner
+    await processUser(OWNER_ID);
   } catch (err: any) {
     console.error('[Bot Worker] Poll failed:', err.message);
   }
@@ -95,9 +95,9 @@ async function pollAll() {
 
 export function initializeBotWorker(): void {
   if (timer) return;
-  console.log(`[Bot Worker] Starting — interval: ${POLL_INTERVAL / 1000}s`);
+  console.log(`[Bot Worker] Starting — interval: ${POLL_INTERVAL / 1000}s (owner: ${OWNER_ID})`);
   timer = setInterval(pollAll, POLL_INTERVAL);
-  pollAll().catch((e) => console.error('[Bot Worker] Initial poll:', e.message));
+  pollAll().catch((e: any) => console.error('[Bot Worker] Initial poll:', e.message));
 }
 
 export function stopBotWorker(): void {

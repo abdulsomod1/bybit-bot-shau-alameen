@@ -9,6 +9,93 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ============================================================
+-- 0. FIXED BOT OWNER USER
+-- The bot uses this UUID for all database records.
+-- DO NOT change this. All other user management is disabled.
+-- ============================================================
+DO $$
+BEGIN
+  INSERT INTO public.users (id, email, name)
+  VALUES ('00000000-0000-4000-8000-000000000001', 'bot@owner.local', 'Bot Owner')
+  ON CONFLICT (id) DO NOTHING;
+END $$;
+
+-- Ensure related records exist for the owner
+DO $$
+BEGIN
+  INSERT INTO public.profiles (id, display_name)
+  VALUES ('00000000-0000-4000-8000-000000000001', 'Bot Owner')
+  ON CONFLICT (id) DO NOTHING;
+
+  INSERT INTO public.bot_settings (user_id)
+  VALUES ('00000000-0000-4000-8000-000000000001')
+  ON CONFLICT (user_id) DO NOTHING;
+
+  INSERT INTO public.bot_state (user_id, status)
+  VALUES ('00000000-0000-4000-8000-000000000001', 'stopped')
+  ON CONFLICT (user_id) DO NOTHING;
+
+  INSERT INTO public.api_credentials (user_id, has_credentials)
+  VALUES ('00000000-0000-4000-8000-000000000001', false)
+  ON CONFLICT (user_id) DO NOTHING;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_credentials_user_id ON public.api_credentials(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pricing_rules_user_id ON public.pricing_rules(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ads_user_id ON public.ads(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_competitor_rankings_user_id ON public.competitor_rankings(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_activity_logs_user_id ON public.activity_logs(user_id);
+
+-- ============================================================
+-- SECURE CREDENTIAL STORAGE FUNCTION
+-- ============================================================
+-- Uses SECURITY DEFINER so the service role bypasses RLS.
+-- Called ONLY from the Express server (never from the browser).
+-- The service role key is kept server-side only.
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.save_api_credentials(
+  p_user_id          UUID,
+  p_api_key          TEXT,
+  p_api_key_masked   TEXT,
+  p_api_secret_encrypted TEXT,
+  p_api_secret_iv    TEXT,
+  p_has_credentials  BOOLEAN,
+  p_registered_ip    TEXT
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.api_credentials (
+    user_id, api_key, api_key_masked,
+    api_secret_encrypted, api_secret_iv,
+    has_credentials, registered_ip,
+    updated_at
+  )
+  VALUES (
+    p_user_id, p_api_key, p_api_key_masked,
+    p_api_secret_encrypted, p_api_secret_iv,
+    p_has_credentials, p_registered_ip,
+    NOW()
+  )
+  ON CONFLICT (user_id) DO UPDATE SET
+    api_key            = EXCLUDED.api_key,
+    api_key_masked     = EXCLUDED.api_key_masked,
+    api_secret_encrypted = EXCLUDED.api_secret_encrypted,
+    api_secret_iv      = EXCLUDED.api_secret_iv,
+    has_credentials    = EXCLUDED.has_credentials,
+    registered_ip      = EXCLUDED.registered_ip,
+    updated_at         = NOW();
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.save_api_credentials(
+  UUID, TEXT, TEXT, TEXT, TEXT, BOOLEAN, TEXT
+) TO service_role;
+
+-- ============================================================
 -- 1. USERS TABLE (custom user registry)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.users (

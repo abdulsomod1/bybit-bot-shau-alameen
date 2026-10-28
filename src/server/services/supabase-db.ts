@@ -78,33 +78,6 @@ export function maskApiKey(key: string): string {
   return key.length >= 8 ? `${key.slice(0, 4)}****${key.slice(-4)}` : '****';
 }
 
-// ── Auth helpers ─────────────────────────────────────────────────────────────────
-
-/** Create a new user account. */
-export async function signUp(email: string, password: string, displayName?: string) {
-  const meta: Record<string, string> = {};
-  if (displayName) meta.display_name = displayName;
-
-  const { data, error } = await supabaseAdmin.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-    user_metadata: meta,
-  });
-
-  if (error) throw new Error(error.message);
-  if (!data.user) throw new Error('User creation returned no data');
-  return data.user;
-}
-
-/** Sign in and return the session (contains access_token for JWT auth). */
-export async function signIn(email: string, password: string) {
-  const { data, error } = await supabaseAdmin.auth.signInWithPassword({ email, password });
-  if (error) throw new Error(error.message);
-  if (!data.session) throw new Error('Login returned no session');
-  return data;
-}
-
 // ── Credential helpers (service role, no RLS) ────────────────────────────────
 
 /** Get credentials metadata only (no secret). Used by API route for display. */

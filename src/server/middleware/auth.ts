@@ -1,41 +1,55 @@
 // src/server/middleware/auth.ts
-// Single-user desktop app: bypass JWT, use fixed GUEST_USER_ID from env.
-// All RLS is bypassed here since this is a local-only app.
-// In future: if multi-user is needed, add real JWT auth back.
+// Owner-only access middleware.
+// The dashboard and all sensitive API routes require a valid owner access token.
+// No Supabase Auth, no sign-up, no sign-in.
 import { type Request, type Response, type NextFunction } from 'express';
 import { SupabaseClient } from '@supabase/supabase-js';
-import { SUPABASE_URL } from '../services/db-helpers.js';
+
+// ── Fixed bot owner UUID ───────────────────────────────────────────────────────
+/** The fixed UUID of the bot owner. Used for all DB records. */
+export const BOT_OWNER_ID = '00000000-0000-4000-8000-000000000001';
 
 export interface AuthenticatedRequest extends Request {
   userId: string;
   supabase: SupabaseClient;
 }
 
-const GUEST_USER_ID = process.env.GUEST_USER_ID ?? 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
+// ── Owner Access Token ─────────────────────────────────────────────────────────
+// Protects sensitive routes from unauthorized public access.
+const OWNER_TOKEN_PROD = process.env.OWNER_ACCESS_TOKEN ?? '';
+const OWNER_TOKEN_DEV = process.env.OWNER_ACCESS_TOKEN_DEV ?? '';
+const IS_PROD = process.env.NODE_ENV === 'production';
 
-// Creates a Supabase client scoped to the guest user.
-// Uses ANON key so RLS policies still apply (safe read paths).
-// For write paths that need to bypass RLS, use supabaseAdmin directly.
-export function getScopedClient(): SupabaseClient {
-  return new SupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY || SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+function isValidOwnerToken(req: Request): boolean {
+  const provided = req.headers['x-owner-access-token'] as string | undefined;
+  if (!provided) return false;
+  if (IS_PROD) return provided === OWNER_TOKEN_PROD && OWNER_TOKEN_PROD !== '';
+  return provided === OWNER_TOKEN_DEV || provided === OWNER_TOKEN_PROD;
 }
 
-// Middleware that skips JWT verification and uses the fixed guest user.
-// This is safe because the app is a single-user desktop client.
-export async function requireAuth(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): Promise<void> {
-  const scopedSupabase = getScopedClient();
-  (req as AuthenticatedRequest).userId = GUEST_USER_ID;
-  (req as AuthenticatedRequest).supabase = scopedSupabase;
+// ── Middleware ─────────────────────────────────────────────────────────────────
+
+/**
+ * Require owner access token for sensitive routes.
+ * Returns 401 if token is missing or invalid.
+ */
+export function requireOwnerToken(req: Request, res: Response, next: NextFunction): void {
+  if (!isValidOwnerToken(req)) {
+    res.status(401).json({ error: 'Unauthorized: valid owner access token required' });
+    return;
+  }
   next();
 }
 
-// Alias so existing route code doesn't need to change
-export const supabaseAdminAuth = GUEST_USER_ID;
+/**
+ * Set the bot owner userId on all requests (no JWT verification needed).
+ * The owner ID is for database relationships, not authentication.
+ */
+export async function requireAuth(req: Request, _res: Response, _next: NextFunction): Promise<void> {
+  (req as AuthenticatedRequest).userId = BOT_OWNER_ID;
+  _next();
+}
+
+// Alias for compatibility with existing route code
+export const supabaseAdminAuth = BOT_OWNER_ID;
+
