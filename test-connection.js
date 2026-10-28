@@ -1,63 +1,167 @@
+
 /**
- * Test script - Check Supabase connection and table status
- * Run: node test-connection.js
+ * Supabase Connection and Table Status Test
+ *
+ * Run from your project directory:
+ *   node test-connection.js
+ *
+ * This script checks the Supabase connection, verifies that the
+ * required tables are accessible, and reports configuration errors.
+ *
+ * IMPORTANT:
+ * - Keep the service-role key on the server or in a local test script.
+ * - Never expose it in frontend code or commit it to GitHub.
+ * - This test does not insert, update, or delete database records.
  */
 
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_URL = process.env.SUPABASE_URL?.trim();
+const SERVICE_ROLE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 
-console.log('\n=== Supabase Connection Test ===\n');
+const TABLES = [
+  'bot_settings',
+  'bot_state',
+  'api_credentials',
+  'pricing_rules',
+  'ads',
+  'activity_logs',
+  'competitor_rankings',
+];
 
-// Check env vars
-if (!SUPABASE_URL) {
-  console.error('❌ SUPABASE_URL is not set in .env');
+function fail(message) {
+  console.error(`\n❌ ${message}\n`);
   process.exit(1);
 }
 
-if (!SERVICE_ROLE_KEY || SERVICE_ROLE_KEY === '<PASTE-SERVICE-ROLE-KEY-HERE>') {
-  console.error('❌ SUPABASE_SERVICE_ROLE_KEY is missing or is placeholder in .env');
-  console.error('   Fix: Edit c:\\bot\\.env and replace with your real service role key');
-  process.exit(1);
-}
-
-// Create admin client
-const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-
-const tables = ['bot_settings', 'bot_state', 'api_credentials', 'pricing_rules', 'ads', 'activity_logs', 'competitor_rankings'];
-
-console.log('Checking tables...\n');
-
-let allOk = true;
-for (const table of tables) {
+function maskUrl(url) {
   try {
-    const { data, error } = await supabase.from(table).select('id').limit(1);
-    if (error) {
-      console.log(`❌ ${table}: ${error.message}`);
-      allOk = false;
-    } else {
-      console.log(`✅ ${table}: OK`);
-    }
-  } catch (e: any) {
-    console.log(`❌ ${table}: ${e.message}`);
-    allOk = false;
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return '(invalid URL)';
   }
 }
 
-console.log('');
-if (allOk) {
-  console.log('✅ All tables exist! Connection is working.\n');
-  console.log('Restart the bot with: python launch.py');
-} else {
-  console.log('❌ Some tables are missing.\n');
-  console.log('=== FIX REQUIRED ===');
-  console.log('\n1. Go to Supabase Dashboard:');
-  console.log('   https://supabase.com/dashboard/project/esnciydnbkanyxhjpvlk/sql');
-  console.log('\n2. Copy contents of c:\\bot\\supabase\\schema.sql');
-  console.log('\n3. Paste and RUN in SQL Editor');
-  console.log('\n4. Then run this test again: node test-connection.js\n');
+async function main() {
+  console.log('\n=== Supabase Connection Test ===\n');
+
+  // 1. Validate environment variables.
+  if (!SUPABASE_URL) {
+    fail('SUPABASE_URL is missing from your environment.');
+  }
+
+  if (!/^https:\/\/[^/]+/i.test(SUPABASE_URL)) {
+    fail(
+      'SUPABASE_URL must be a valid HTTPS Supabase project URL.'
+    );
+  }
+
+  if (!SERVICE_ROLE_KEY) {
+    fail(
+      'SUPABASE_SERVICE_ROLE_KEY is missing. ' +
+      'Configure it in your local .env file or Render environment.'
+    );
+  }
+
+  if (
+    SERVICE_ROLE_KEY === '<PASTE-SERVICE-ROLE-KEY-HERE>' ||
+    SERVICE_ROLE_KEY.toLowerCase().includes('placeholder')
+  ) {
+    fail(
+      'SUPABASE_SERVICE_ROLE_KEY still contains a placeholder. ' +
+      'Replace it with your actual server-side secret key.'
+    );
+  }
+
+  console.log(`Project: ${maskUrl(SUPABASE_URL)}`);
+  console.log('Environment variables: present');
+  console.log('Creating server-side Supabase client...\n');
+
+  // 2. Create the Supabase client.
+  const supabase = createClient(
+    SUPABASE_URL,
+    SERVICE_ROLE_KEY,
+    {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    }
+  );
+
+  // 3. Check each table without printing stored records.
+  let passed = 0;
+  let failed = 0;
+
+  console.log('Checking required tables...\n');
+
+  for (const table of TABLES) {
+    try {
+      const { error } = await supabase
+        .from(table)
+        .select('*')
+        .limit(0);
+
+      if (error) {
+        failed++;
+        console.error(`❌ ${table}: ${error.message}`);
+
+        if (error.code === '42P01' || error.code === 'PGRST205') {
+          console.error(
+            '   Hint: The table may be missing or its schema ' +
+            'may not be exposed through the API.'
+          );
+        } else if (error.code === '42501') {
+          console.error(
+            '   Hint: Database permissions may be insufficient.'
+          );
+        }
+      } else {
+        passed++;
+        console.log(`✅ ${table}: accessible`);
+      }
+    } catch (error) {
+      failed++;
+      console.error(
+        `❌ ${table}: ${error?.message ?? 'Unexpected error'}`
+      );
+    }
+  }
+
+  // 4. Summarize results.
+  console.log('\n=== Test Summary ===');
+  console.log(`Accessible tables: ${passed}/${TABLES.length}`);
+  console.log(`Failed checks: ${failed}/${TABLES.length}`);
+
+  if (failed > 0) {
+    console.log('\nSome checks failed.');
+    console.log(
+      'Review the errors above and verify your table schema, ' +
+      'environment variables, and database permissions.'
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log('\n✅ All required tables are accessible.');
+  console.log(
+    '\nNote: This test does not verify credential insertion, ' +
+    'encryption, or the bot backend’s actual Supabase client.'
+  );
+  console.log(
+    'Next: inspect the saveCredentials implementation ' +
+    'if credential saving still fails.'
+  );
 }
 
-console.log('=== Test Complete ===\n');
+main().catch((error) => {
+  console.error(
+    '\n❌ Supabase test failed:',
+    error?.message ?? error
+  );
+  process.exitCode = 1;
+});
