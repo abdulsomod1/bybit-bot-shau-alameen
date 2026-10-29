@@ -2,7 +2,11 @@
 // HTTP API client for the web/electron renderer.
 // All requests go to the Express API server (same-origin in production).
 // Owner access token is required for all endpoints (stored in localStorage).
-const BASE = (window as any).__API_BASE__ ?? '/api';
+// Base URL for the Express API server.
+// In production: same-origin (Express serves the React build), BASE='/api'
+// In development: Vite proxies /api → localhost:3000, BASE is set via window.__API_BASE__
+// Fix: default to '/api' — use || not ?? so that empty string also falls back correctly.
+const BASE = (window as any).__API_BASE__ || '/api';
 
 /** Get the stored owner access token from localStorage */
 export function getOwnerToken(): string {

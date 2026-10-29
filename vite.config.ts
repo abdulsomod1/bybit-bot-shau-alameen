@@ -27,10 +27,11 @@ export default defineConfig(({ mode }) => {
       // Expose env vars to the renderer bundle
       'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(env.VITE_SUPABASE_URL ?? ''),
       'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(env.VITE_SUPABASE_ANON_KEY ?? ''),
-      // API base URL for HTTP calls (empty = relative /api, or set to full URL)
-      'import.meta.env.VITE_API_BASE_URL': JSON.stringify(env.VITE_API_BASE_URL ?? ''),
+      // API base URL for HTTP calls (empty or unset → /api, or set to full URL)
+      'import.meta.env.VITE_API_BASE_URL': JSON.stringify(env.VITE_API_BASE_URL || '/api'),
       // Expose API base as a global for the API client
-      'window.__API_BASE__': JSON.stringify(env.VITE_API_BASE_URL ?? ''),
+      // Fix: default to '/api' (not '') — use || so both undefined AND '' fall back to /api
+      'window.__API_BASE__': JSON.stringify(env.VITE_API_BASE_URL || '/api'),
     },
     server: {
       port: 5173,
