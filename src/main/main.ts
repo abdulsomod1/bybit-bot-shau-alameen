@@ -64,7 +64,18 @@ async function createWindow(): Promise<void> {
 
   mainWindow = window;
 
+  // Fallback: ensure window is shown even if ready-to-show doesn't fire
+  // This fixes the blank page issue on reload
+  const showFallback = setTimeout(() => {
+    if (!window.isDestroyed() && !window.isVisible()) {
+      log.warn('ready-to-show timeout - showing window anyway');
+      window.show();
+      window.focus();
+    }
+  }, 5000); // 5 second fallback
+
   window.once('ready-to-show', () => {
+    clearTimeout(showFallback);
     if (!window.isDestroyed()) {
       window.show();
       window.focus();
@@ -83,6 +94,10 @@ async function createWindow(): Promise<void> {
       );
     }
   );
+
+  window.webContents.on('did-finish-load', () => {
+    log.info('Window finished loading:', window.webContents.getURL());
+  });
 
   window.webContents.on('render-process-gone', (_event, details) => {
     log.error('Renderer process stopped:', details);

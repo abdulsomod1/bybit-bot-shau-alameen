@@ -12,6 +12,8 @@ export function useApi() {
   const [credentials, setCredentials] = useState<any>(null);
   const [settings, setSettings] = useState<any>(null);
   const [botState, setBotState] = useState<any>(null);
+  const [apiServerOk, setApiServerOk] = useState<boolean>(true);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -33,6 +35,20 @@ export function useApi() {
       const authError = (v: any) =>
         v && typeof v === 'object' && (v.unauthorized || (v.error && v.error.includes('Unauthorized')));
 
+      // Check if any API call failed due to server issues
+      const hasServerError = [st, ad, rl, rk, lg, cr, se, bs].some(
+        p => p.status === 'rejected' || 
+            (p.status === 'fulfilled' && p.value?.error?.includes('Cannot connect') || p.value?.error?.includes('Express'))
+      );
+
+      if (hasServerError) {
+        setApiServerOk(false);
+        setApiError('API server is not responding. Please restart the bot using "node run-dev.js"');
+      } else {
+        setApiServerOk(true);
+        setApiError(null);
+      }
+
       setStatus(authError(safe(st, null)) ? null : safe(st, null));
       setAds(authError(safe(ad, null)) ? [] : safe(ad, []));
       setRules(authError(safe(rl, null)) ? [] : safe(rl, []));
@@ -43,6 +59,8 @@ export function useApi() {
       setBotState(authError(safe(bs, null)) ? null : safe(bs, null));
     } catch (e) {
       console.error('[useApi] fetchAll error', e);
+      setApiServerOk(false);
+      setApiError(e instanceof Error ? e.message : 'API error');
     }
   }, []);
 
@@ -143,6 +161,7 @@ export function useApi() {
     fetchAll, saveCredentials, saveSettings, saveRule, deleteRule,
     toggleAdSelection, startBot, pauseBot, resumeBot, stopBot,
     refreshRankings, testCredentials, deleteCredentials, clearLogs, fetchAdsFromBybit,
+    apiServerOk, apiError,
   };
 }
 

@@ -29,11 +29,28 @@ export default function App() {
 
   const Page = pages[page] || Dashboard;
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: 'var(--bg-primary)' }}>
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto p-6">
-        <Page />
-      </main>
+    <div className="flex flex-col h-screen overflow-hidden" style={{ background: 'var(--bg-primary)' }}>
+      {/* API Server Warning Banner */}
+      {!api.apiServerOk && api.apiError && (
+        <div className="flex items-center gap-2 px-4 py-2 text-sm" 
+          style={{ background: 'var(--warning)', color: '#000' }}>
+          <span>⚠️</span>
+          <span className="flex-1">{api.apiError}</span>
+          <button 
+            onClick={() => api.fetchAll()} 
+            className="px-3 py-1 rounded text-xs font-medium"
+            style={{ background: 'rgba(0,0,0,0.2)' }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar />
+        <main className="flex-1 overflow-y-auto p-6">
+          <Page />
+        </main>
+      </div>
     </div>
   );
 }

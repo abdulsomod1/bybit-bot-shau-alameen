@@ -20,6 +20,17 @@ export function clearOwnerToken(): void {
   localStorage.removeItem('owner_access_token');
 }
 
+/** Check if the API server is reachable */
+export async function checkApiHealth(): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch('/health', { method: 'GET' });
+    if (res.ok) return { ok: true };
+    return { ok: false, error: `Health check returned ${res.status}` };
+  } catch (err) {
+    return { ok: false, error: 'Cannot reach API server. Express may not be running.' };
+  }
+}
+
 async function request<T>(
   method: string, path: string, body?: unknown,
 ): Promise<T> {
@@ -33,10 +44,23 @@ async function request<T>(
     method,
     headers,
     body: body != null ? JSON.stringify(body) : undefined,
+  }).catch((err) => {
+    // Network error (e.g., API server not running)
+    throw new Error(`Cannot connect to API server. Please ensure the Express server is running on port 3000. (${err.message})`);
   });
 
   const data = await res.json().catch(() => ({})) as { error?: string };
-  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+  
+  // Improve error messages for common issues
+  if (!res.ok) {
+    if (res.status === 404) {
+      throw new Error(`API endpoint not found: ${path}. Please restart the bot.`);
+    }
+    if (res.status === 401) {
+      throw new Error(`Unauthorized. Please add your Owner Access Token in Settings.`);
+    }
+    throw new Error(data.error ?? `Request failed (${res.status})`);
+  }
   return data as T;
 }
 
