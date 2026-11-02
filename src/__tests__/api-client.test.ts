@@ -136,9 +136,16 @@ describe('API availability reporting', () => {
     const fs = require('fs');
     const src = fs.readFileSync('src/renderer/hooks/useApi.ts', 'utf-8');
     expect(src).toMatch(/else if \(unauthorized\)/);
-    expect(src).toContain('API server is online');
-    expect(src).toContain('OWNER_ACCESS_TOKEN in your hosting provider settings');
-    expect(src).toContain('OWNER_ACCESS_TOKEN_DEV in your local .env');
+    expect(src).toContain('The API is online');
+    expect(src).toContain('OWNER_ACCESS_TOKEN is not configured in the environment');
+    expect(src).toContain('OWNER_ACCESS_TOKEN_DEV is empty in the local server environment');
+  });
+
+  test('hosted auth errors direct users to the exact Render service domain and browser token', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('src/renderer/hooks/useApi.ts', 'utf-8');
+    expect(src).toContain('not configured in the environment of the Render service');
+    expect(src).toContain('does not match the token saved in this browser');
   });
 
   test('saving owner token refreshes requests with the newly stored token', () => {

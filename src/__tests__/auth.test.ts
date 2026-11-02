@@ -34,18 +34,32 @@ describe('Timing-safe token comparison', () => {
     const src = read('src/server/middleware/auth.ts');
     expect(src).toMatch(/OWNER_TOKEN_PROD\s*!==\s*['"]+['"]+\s*&&\s*timingSafeStringEqual/);
   });
+
+  test('Owner tokens are trimmed consistently from environment and request header', () => {
+    const src = read('src/server/middleware/auth.ts');
+    expect(src).toContain("process.env.OWNER_ACCESS_TOKEN?.trim()");
+    expect(src).toContain("process.env.OWNER_ACCESS_TOKEN_DEV?.trim()");
+    expect(src).toContain("req.headers['x-owner-access-token'] as string | undefined)?.trim()");
+  });
+
+  test('Unauthorized responses distinguish an unset server token from a mismatch', () => {
+    const src = read('src/server/middleware/auth.ts');
+    expect(src).toContain('owner access token does not match the running server configuration');
+    expect(src).toContain('owner access token is not configured on the running server');
+  });
 });
 
 describe('Auth 401 errors hide token', () => {
-  test('Returns generic 401 message without token value', () => {
+  test('Returns safe diagnostic categories without token values', () => {
     const src = read('src/server/middleware/auth.ts');
-    expect(src).toMatch(/status\(401\)\.json\(\{\s*error:\s*['"]Unauthorized: valid owner access token required['"]/);
+    expect(src).toContain('owner access token does not match the running server configuration');
+    expect(src).toContain('owner access token is not configured on the running server');
   });
 
-  test('Error string has no OWNER_TOKEN hint', () => {
+  test('Error responses never include configured or provided token values', () => {
     const src = read('src/server/middleware/auth.ts');
-    const err = src.match(/status\(401\)\.json\([^}]+\}/)?.[0] ?? '';
-    expect(err).not.toMatch(/OWNER_TOKEN|expected|should be/i);
+    const handler = src.match(/export function requireOwnerToken[\s\S]*?\n}/)?.[0] ?? '';
+    expect(handler).not.toMatch(/\$\{(?:OWNER_TOKEN_PROD|OWNER_TOKEN_DEV|provided)/);
   });
 });
 

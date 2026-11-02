@@ -41,16 +41,28 @@ export function useApi() {
           result.reason instanceof Error ? result.reason.message : String(result.reason),
         ),
       );
+      const authError = rejected.find(
+        result => /unauthorized/i.test(
+          result.reason instanceof Error ? result.reason.message : String(result.reason),
+        ),
+      )?.reason;
       const requestError = rejected[0]?.reason;
 
       setApiServerOk(health.ok);
       if (!health.ok) {
         setApiError('API server is not responding. Please restart the bot using "node run-dev.js"');
       } else if (unauthorized) {
+        const detail = authError instanceof Error ? authError.message : String(authError);
         const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-        setApiError(isLocal
-          ? 'API server is online but rejected the owner token. Check OWNER_ACCESS_TOKEN_DEV in your local .env, restart the server, and enter the same token in Settings.'
-          : 'API server is online but rejected the owner token. Set OWNER_ACCESS_TOKEN in your hosting provider settings (Render: Dashboard → service → Environment) to match the token entered in this browser, then restart or redeploy the service.');
+        if (detail.includes('not configured')) {
+          setApiError(isLocal
+            ? 'The API is online, but OWNER_ACCESS_TOKEN_DEV is empty in the local server environment.'
+            : 'The API is online, but OWNER_ACCESS_TOKEN is not configured in the environment of the Render service serving this domain.');
+        } else {
+          setApiError(isLocal
+            ? 'The API is online but rejected the owner token. Check OWNER_ACCESS_TOKEN_DEV in your local .env, restart the server, and enter the same token in Settings.'
+            : 'The API is online but rejected the owner token. The running Render service has a token configured, but it does not match the token saved in this browser. Check the service serving this exact domain, then use Change Token and re-enter its current OWNER_ACCESS_TOKEN value.');
+        }
       } else if (rejected.length > 0) {
         const message = requestError instanceof Error ? requestError.message : String(requestError);
         setApiError(`API request failed: ${message}`);

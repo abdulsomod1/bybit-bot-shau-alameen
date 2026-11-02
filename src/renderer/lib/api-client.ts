@@ -61,7 +61,7 @@ async function request<T>(
       throw new Error(`API endpoint not found: ${path}. Please restart the bot.`);
     }
     if (res.status === 401) {
-      throw new Error(`Unauthorized. Please add your Owner Access Token in Settings.`);
+      throw new Error(data.error ?? 'Unauthorized. Please add your Owner Access Token in Settings.');
     }
     throw new Error(data.error ?? `Request failed (${res.status})`);
   }

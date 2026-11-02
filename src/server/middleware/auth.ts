@@ -18,8 +18,8 @@ export interface AuthenticatedRequest extends Request {
 
 // ── Owner Access Token ─────────────────────────────────────────────────────────
 // Protects sensitive routes from unauthorized public access.
-const OWNER_TOKEN_PROD = process.env.OWNER_ACCESS_TOKEN ?? '';
-const OWNER_TOKEN_DEV = process.env.OWNER_ACCESS_TOKEN_DEV ?? '';
+const OWNER_TOKEN_PROD = process.env.OWNER_ACCESS_TOKEN?.trim() ?? '';
+const OWNER_TOKEN_DEV = process.env.OWNER_ACCESS_TOKEN_DEV?.trim() ?? '';
 const IS_PROD = process.env.NODE_ENV === 'production';
 
 /**
@@ -53,7 +53,7 @@ function timingSafeStringEqual(a: string, b: string): boolean {
 }
 
 function isValidOwnerToken(req: Request): boolean {
-  const provided = req.headers['x-owner-access-token'] as string | undefined;
+  const provided = (req.headers['x-owner-access-token'] as string | undefined)?.trim();
   if (!provided) return false;
 
   if (IS_PROD) {
@@ -75,7 +75,12 @@ function isValidOwnerToken(req: Request): boolean {
  */
 export function requireOwnerToken(req: Request, res: Response, next: NextFunction): void {
   if (!isValidOwnerToken(req)) {
-    res.status(401).json({ error: 'Unauthorized: valid owner access token required' });
+    const configuredToken = IS_PROD ? OWNER_TOKEN_PROD : OWNER_TOKEN_DEV || OWNER_TOKEN_PROD;
+    res.status(401).json({
+      error: configuredToken
+        ? 'Unauthorized: owner access token does not match the running server configuration'
+        : 'Unauthorized: owner access token is not configured on the running server',
+    });
     return;
   }
   next();
