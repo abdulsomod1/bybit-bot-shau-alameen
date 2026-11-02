@@ -47,7 +47,10 @@ export function useApi() {
       if (!health.ok) {
         setApiError('API server is not responding. Please restart the bot using "node run-dev.js"');
       } else if (unauthorized) {
-        setApiError('API server is online, but the owner access token is missing or invalid. Enter the token configured in .env under Settings.');
+        const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+        setApiError(isLocal
+          ? 'API server is online but rejected the owner token. Check OWNER_ACCESS_TOKEN_DEV in your local .env, restart the server, and enter the same token in Settings.'
+          : 'API server is online but rejected the owner token. Set OWNER_ACCESS_TOKEN in your hosting provider settings (Render: Dashboard → service → Environment) to match the token entered in this browser, then restart or redeploy the service.');
       } else if (rejected.length > 0) {
         const message = requestError instanceof Error ? requestError.message : String(requestError);
         setApiError(`API request failed: ${message}`);

@@ -32,6 +32,7 @@ export default function Settings() {
     }
     setOwnerToken(ownerToken.trim());
     setTokenSaved(true);
+    void fetchAll();
     setTimeout(() => setTokenSaved(false), 3000);
   };
 
@@ -242,7 +243,7 @@ export default function Settings() {
             <button onClick={saveToken} className="btn btn-primary">Save Token</button>
           </div>
           {tokenError && <p className="text-xs mt-1" style={{ color: 'var(--error)' }}>{tokenError}</p>}
-          {tokenSaved && <p className="text-xs mt-1" style={{ color: 'var(--success)' }}>Token saved! The page will reload.</p>}
+          {tokenSaved && <p className="text-xs mt-1" style={{ color: 'var(--success)' }}>Token saved. Checking access…</p>}
         </div>
       )}
 
@@ -251,7 +252,7 @@ export default function Settings() {
         <div className="card">
           <h3 className="font-semibold mb-2">🔐 Owner Access Token</h3>
           <div className="flex gap-2 items-center">
-            <span className="text-sm" style={{ color: 'var(--success)' }}>✓ Token is configured</span>
+            <span className="text-sm" style={{ color: 'var(--success)' }}>✓ Token saved in this browser (server access is checked separately)</span>
             <button onClick={clearToken} className="btn btn-ghost text-xs ml-auto">Change Token</button>
           </div>
         </div>

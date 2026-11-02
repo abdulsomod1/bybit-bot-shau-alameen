@@ -137,5 +137,15 @@ describe('API availability reporting', () => {
     const src = fs.readFileSync('src/renderer/hooks/useApi.ts', 'utf-8');
     expect(src).toMatch(/else if \(unauthorized\)/);
     expect(src).toContain('API server is online');
+    expect(src).toContain('OWNER_ACCESS_TOKEN in your hosting provider settings');
+    expect(src).toContain('OWNER_ACCESS_TOKEN_DEV in your local .env');
+  });
+
+  test('saving owner token refreshes requests with the newly stored token', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('src/renderer/pages/Settings.tsx', 'utf-8');
+    expect(src).toContain('setOwnerToken(ownerToken.trim());');
+    expect(src).toContain('void fetchAll();');
+    expect(src).toContain('Token saved in this browser');
   });
 });
