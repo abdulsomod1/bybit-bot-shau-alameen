@@ -31,7 +31,7 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen overflow-hidden" style={{ background: 'var(--bg-primary)' }}>
       {/* API Server Warning Banner */}
-      {!api.apiServerOk && api.apiError && (
+      {api.apiError && (
         <div className="flex items-center gap-2 px-4 py-2 text-sm" 
           style={{ background: 'var(--warning)', color: '#000' }}>
           <span>⚠️</span>
@@ -54,4 +54,3 @@ export default function App() {
     </div>
   );
 }
-

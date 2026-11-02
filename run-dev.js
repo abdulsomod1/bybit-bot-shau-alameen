@@ -1,13 +1,22 @@
-// dev-launcher.js — Build + robust Vite + Electron launch with full logging
-const { spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+// Build and launch the API server, Vite, and Electron for development.
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
 
-const ROOT = 'C:\\bot';
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(ROOT, '.env') });
+
+const PORT = Number.parseInt(process.env.PORT ?? '3000', 10);
 const LOG = path.join(ROOT, 'dev_launch.log');
 const VITE_OUT = path.join(ROOT, 'vite_out.log');
 const SERVER_OUT = path.join(ROOT, 'server_out.log');
 const ELECTRON_OUT = path.join(ROOT, 'electron_out.log');
+const TSC = path.join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
+const VITE = path.join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
+const ELECTRON = path.join(ROOT, 'node_modules', 'electron', 'cli.js');
 
 // Clear log
 fs.writeFileSync(LOG, '');
@@ -20,33 +29,46 @@ const log = (...a) => {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+function build(label, config) {
+  log(`\nBuilding ${label}...`);
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [TSC, '-p', config], {
+      cwd: ROOT,
+      stdio: 'inherit',
+    });
+    child.once('error', reject);
+    child.once('close', code => {
+      if (code === 0) resolve();
+      else reject(new Error(`${label} failed (${code})`));
+    });
+  });
+}
+
+function isHealthy(url) {
+  return new Promise(resolve => {
+    const req = http.get(url, response => {
+      response.resume();
+      resolve(response.statusCode === 200);
+    });
+    req.once('error', () => resolve(false));
+    req.setTimeout(3000, () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
 async function main() {
   log('=== dev-launcher starting ===');
   log('Node:', process.version);
 
-  // 1. Build main process
-  log('\n[1/4] Building main process...');
-  await new Promise((res, rej) => {
-    const p = spawn('npx', ['tsc', '-p', 'tsconfig.main.json'], { cwd: ROOT, stdio: 'inherit' });
-    p.on('close', code => code === 0 ? res() : rej(new Error(`build:main failed (${code})`)));
-  });
-  log('build:main OK');
+  if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+    throw new Error(`Invalid PORT value: ${process.env.PORT}`);
+  }
 
-  // 2. Build preload
-  log('\n[2/4] Building preload...');
-  await new Promise((res, rej) => {
-    const p = spawn('npx', ['tsc', '-p', 'src/preload/tsconfig.json'], { cwd: ROOT, stdio: 'inherit' });
-    p.on('close', code => code === 0 ? res() : rej(new Error(`build:preload failed (${code})`)));
-  });
-  log('build:preload OK');
-
-  // 3. Build server
-  log('\n[3/4] Building Express server...');
-  await new Promise((res, rej) => {
-    const p = spawn('npx', ['tsc', '-p', 'tsconfig.server.json'], { cwd: ROOT, stdio: 'inherit' });
-    p.on('close', code => code === 0 ? res() : rej(new Error(`build:server failed (${code})`)));
-  });
-  log('build:server OK');
+  await build('main process', 'tsconfig.main.json');
+  await build('preload', 'src/preload/tsconfig.json');
+  await build('API server', 'tsconfig.server.json');
 
   // 4. Verify outputs
   const mainJs = path.join(ROOT, 'dist/main/main/main.js');
@@ -57,52 +79,47 @@ async function main() {
   if (!fs.existsSync(serverJs)) { log('ERROR: server/index.js missing'); process.exit(1); }
   log('Build outputs verified OK');
 
-  // 5. Kill any stale processes
-  log('\nClearing old processes on ports 3000/5173/9222...');
-  ['taskkill /F /IM node.exe 2>nul'].forEach(cmd => {
-    try { require('child_process').execSync(cmd, { cwd: ROOT, stdio: 'ignore', windowsHide: true }); } catch {}
-  });
-  ['taskkill /F /IM electron.exe 2>nul'].forEach(cmd => {
-    try { require('child_process').execSync(cmd, { cwd: ROOT, stdio: 'ignore', windowsHide: true }); } catch {}
-  });
+  const healthUrl = `http://127.0.0.1:${PORT}/health`;
+  let serverReady = await isHealthy(healthUrl);
+  if (serverReady) {
+    log(`API server is already responding at ${healthUrl}; reusing it.`);
+  } else {
+    log('\nStarting Express API server...');
+    const serverFd = fs.openSync(SERVER_OUT, 'w');
+    let server;
+    try {
+      server = spawn(process.execPath, [serverJs], {
+        cwd: ROOT,
+        detached: true,
+        stdio: ['ignore', serverFd, serverFd],
+      });
+    } finally {
+      fs.closeSync(serverFd);
+    }
+    server.once('error', error => log('Express server spawn error:', error.message));
+    server.unref();
+    log(`Express server spawned (pid=${server.pid}), logs → server_out.log`);
+  }
 
-  // 6. Start Express API server (detached, output to file)
-  log('\n[5] Starting Express API server...');
-  const serverFd = fs.openSync(SERVER_OUT, 'w');
-  const server = spawn('node', ['dist/server/index.js'], {
-    cwd: ROOT, detached: true, stdio: ['ignore', serverFd, serverFd], windowsHide: false
-  });
-  server.unref();
-  fs.closeSync(serverFd);
-  log(`Express server spawned (pid=${server.pid}), logs → server_out.log`);
-
-  // 7. Poll for Express readiness (max 15s)
+  // Poll for Express readiness (max 15s).
   log('Waiting for Express server to respond...');
-  const http = require('http');
-  let serverReady = false;
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
     await sleep(1000);
-    try {
-      const ok = await new Promise((res) => {
-        const req = http.get('http://localhost:3000/health', r => { res(r.statusCode === 200); });
-        req.on('error', () => res(false));
-        req.setTimeout(3000, () => { req.destroy(); res(false); });
-      });
-      if (ok) { serverReady = true; break; }
-    } catch {}
+    if (await isHealthy(healthUrl)) { serverReady = true; break; }
     process.stdout.write('.');
   }
   console.log();
-  if (!serverReady) { log('ERROR: Express server did not respond in 15s. Check server_out.log'); process.exit(1); }
-  log('Express server is ready on http://localhost:3000');
+  if (!serverReady) { log(`ERROR: Express server did not respond in 15s. Check ${SERVER_OUT}`); process.exit(1); }
+  log(`Express server is ready at ${healthUrl}`);
 
   // 8. Start Vite (detached, output to file)
   log('\n[6] Starting Vite dev server...');
   const viteFd = fs.openSync(VITE_OUT, 'w');
-  const vite = spawn('npx', ['vite', '--port', '5173', '--host', '0.0.0.0'], {
-    cwd: ROOT, detached: true, stdio: ['ignore', viteFd, viteFd], windowsHide: false
+  const vite = spawn(process.execPath, [VITE, '--port', '5173', '--host', '0.0.0.0'], {
+    cwd: ROOT, detached: true, stdio: ['ignore', viteFd, viteFd]
   });
+  vite.once('error', error => log('Vite spawn error:', error.message));
   vite.unref();
   fs.closeSync(viteFd);
   log(`Vite spawned (pid=${vite.pid}), logs → vite_out.log`);
@@ -113,14 +130,7 @@ async function main() {
   const viteDeadline = Date.now() + 30000;
   while (Date.now() < viteDeadline) {
     await sleep(1000);
-    try {
-      const ok = await new Promise((res) => {
-        const req = http.get('http://localhost:5173', r => { res(r.statusCode === 200); });
-        req.on('error', () => res(false));
-        req.setTimeout(3000, () => { req.destroy(); res(false); });
-      });
-      if (ok) { viteReady = true; break; }
-    } catch {}
+    if (await isHealthy('http://127.0.0.1:5173')) { viteReady = true; break; }
     process.stdout.write('.');
   }
   console.log();
@@ -130,15 +140,16 @@ async function main() {
   // 10. Start Electron
   log('\n[7] Starting Electron...');
   const elecFd = fs.openSync(ELECTRON_OUT, 'w');
-  const elec = spawn('npx', ['electron', '.', '--remote-debugging-port=9222'], {
-    cwd: ROOT, detached: true, stdio: ['ignore', elecFd, elecFd], windowsHide: false
+  const elec = spawn(process.execPath, [ELECTRON, '.', '--remote-debugging-port=9222'], {
+    cwd: ROOT, detached: true, stdio: ['ignore', elecFd, elecFd]
   });
+  elec.once('error', error => log('Electron spawn error:', error.message));
   elec.unref();
   fs.closeSync(elecFd);
   log(`Electron spawned (pid=${elec.pid}), logs → electron_out.log`);
 
   log('\n=== All done! App should be visible ===');
-  log('Express: http://localhost:3000 (API server)');
+  log(`Express: http://localhost:${PORT} (API server)`);
   log('Vite:    http://localhost:5173 (keep this terminal running)');
   log('Electron window should be showing the app.');
   log('Press F12 in Electron to open DevTools.');

@@ -114,6 +114,12 @@ describe('All endpoints use auth middleware', () => {
     expect(wrapped.length).toBe(routes.length);
   });
 
+  test('Authenticated requests receive the Supabase client used by API handlers', () => {
+    const src = read('src/server/middleware/auth.ts');
+    expect(src).toMatch(/import\s+\{\s*supabaseAdmin\s*\}\s+from\s+['"]\.\.\/services\/supabase-db\.js['"]/);
+    expect(src).toContain('authenticatedRequest.supabase = supabaseAdmin');
+  });
+
   test('BOT_OWNER_ID consistent between auth.ts and index.ts', () => {
     const auth = read('src/server/middleware/auth.ts');
     const idx = read('src/server/index.ts');

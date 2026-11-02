@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   apiSettings, apiCredentials, apiAds, apiRules, apiRankings, apiLogs, apiBotState,
+  checkApiHealth,
 } from '../lib/api-client';
 
 export function useApi() {
@@ -17,7 +18,7 @@ export function useApi() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [st, ad, rl, rk, lg, cr, se, bs] = await Promise.allSettled([
+      const results = await Promise.allSettled([
         apiBotState.get(),
         apiAds.get(),
         apiRules.get(),
@@ -25,38 +26,43 @@ export function useApi() {
         apiLogs.get(),
         apiCredentials.get(),
         apiSettings.get(),
-        apiBotState.get(),
       ]);
+      const [st, ad, rl, rk, lg, cr, se] = results;
 
       const safe = (p: PromiseSettledResult<any>, fallback: any) =>
         p.status === 'fulfilled' ? p.value : fallback;
 
-      // Detect auth errors (401 = missing/invalid owner token)
-      const authError = (v: any) =>
-        v && typeof v === 'object' && (v.unauthorized || (v.error && v.error.includes('Unauthorized')));
-
-      // Check if any API call failed due to server issues
-      const hasServerError = [st, ad, rl, rk, lg, cr, se, bs].some(
-        p => p.status === 'rejected' || 
-            (p.status === 'fulfilled' && p.value?.error?.includes('Cannot connect') || p.value?.error?.includes('Express'))
+      const health = await checkApiHealth();
+      const rejected = results.filter(
+        (result): result is PromiseRejectedResult => result.status === 'rejected',
       );
+      const unauthorized = rejected.some(
+        result => /unauthorized/i.test(
+          result.reason instanceof Error ? result.reason.message : String(result.reason),
+        ),
+      );
+      const requestError = rejected[0]?.reason;
 
-      if (hasServerError) {
-        setApiServerOk(false);
+      setApiServerOk(health.ok);
+      if (!health.ok) {
         setApiError('API server is not responding. Please restart the bot using "node run-dev.js"');
+      } else if (unauthorized) {
+        setApiError('API server is online, but the owner access token is missing or invalid. Enter the token configured in .env under Settings.');
+      } else if (rejected.length > 0) {
+        const message = requestError instanceof Error ? requestError.message : String(requestError);
+        setApiError(`API request failed: ${message}`);
       } else {
-        setApiServerOk(true);
         setApiError(null);
       }
 
-      setStatus(authError(safe(st, null)) ? null : safe(st, null));
-      setAds(authError(safe(ad, null)) ? [] : safe(ad, []));
-      setRules(authError(safe(rl, null)) ? [] : safe(rl, []));
-      setRankings(authError(safe(rk, null)) ? [] : safe(rk, []));
-      setLogs(authError(safe(lg, null)) ? [] : safe(lg, []));
-      setCredentials(authError(safe(cr, null)) ? { has_credentials: false, unauthorized: true } : (safe(cr, { has_credentials: false }) ?? { has_credentials: false }));
-      setSettings(authError(safe(se, null)) ? null : safe(se, null));
-      setBotState(authError(safe(bs, null)) ? null : safe(bs, null));
+      setStatus(safe(st, null));
+      setAds(safe(ad, []));
+      setRules(safe(rl, []));
+      setRankings(safe(rk, []));
+      setLogs(safe(lg, []));
+      setCredentials(safe(cr, { has_credentials: false }) ?? { has_credentials: false });
+      setSettings(safe(se, null));
+      setBotState(safe(st, null));
     } catch (e) {
       console.error('[useApi] fetchAll error', e);
       setApiServerOk(false);
@@ -164,4 +170,3 @@ export function useApi() {
     apiServerOk, apiError,
   };
 }
-

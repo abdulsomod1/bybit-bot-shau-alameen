@@ -5,6 +5,7 @@
 import { type Request, type Response, type NextFunction } from 'express';
 import { createHash, timingSafeEqual } from 'crypto';
 import { SupabaseClient } from '@supabase/supabase-js';
+import { supabaseAdmin } from '../services/supabase-db.js';
 
 // ── Fixed bot owner UUID ───────────────────────────────────────────────────────
 /** The fixed UUID of the bot owner. Used for all DB records. */
@@ -84,11 +85,12 @@ export function requireOwnerToken(req: Request, res: Response, next: NextFunctio
  * Set the bot owner userId on all requests (no JWT verification needed).
  * The owner ID is for database relationships, not authentication.
  */
-export async function requireAuth(req: Request, _res: Response, _next: NextFunction): Promise<void> {
-  (req as AuthenticatedRequest).userId = BOT_OWNER_ID;
-  _next();
+export function requireAuth(req: Request, _res: Response, next: NextFunction): void {
+  const authenticatedRequest = req as AuthenticatedRequest;
+  authenticatedRequest.userId = BOT_OWNER_ID;
+  authenticatedRequest.supabase = supabaseAdmin;
+  next();
 }
 
 // Alias for compatibility with existing route code
 export const supabaseAdminAuth = BOT_OWNER_ID;
-

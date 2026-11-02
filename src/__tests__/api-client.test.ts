@@ -123,3 +123,19 @@ describe('BASE URL fallback logic', () => {
   });
 });
 
+describe('API availability reporting', () => {
+  test('server availability is determined by the health endpoint, not API request failures', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('src/renderer/hooks/useApi.ts', 'utf-8');
+    expect(src).toContain('checkApiHealth()');
+    expect(src).toContain('setApiServerOk(health.ok)');
+    expect(src).toContain("if (!health.ok)");
+  });
+
+  test('unauthorized requests report an owner token issue instead of a server outage', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('src/renderer/hooks/useApi.ts', 'utf-8');
+    expect(src).toMatch(/else if \(unauthorized\)/);
+    expect(src).toContain('API server is online');
+  });
+});
