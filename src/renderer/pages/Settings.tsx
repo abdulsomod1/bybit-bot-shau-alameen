@@ -15,6 +15,7 @@ export default function Settings() {
     settings,
     saveCredentials,
     saveSettings,
+    testCredentials,
     fetchAll,
   } = useApi();
 
@@ -54,7 +55,7 @@ export default function Settings() {
   const [testResult, setTestResult] = useState<TestResult | null>(null);
 
   const hasCredentials = Boolean(
-    credentials?.apiKey && credentials?.apiSecret
+    credentials?.hasCredentials ?? credentials?.has_credentials
   );
 
   // Load existing credentials and settings.
@@ -175,15 +176,7 @@ export default function Settings() {
     setTestResult(null);
 
     try {
-      const api = (window as any).api;
-
-      if (typeof api?.testConnection !== 'function') {
-        throw new Error(
-          'The testConnection API is unavailable. Check the Electron preload bridge.'
-        );
-      }
-
-      const result = await api.testConnection();
+      const result = await testCredentials(apiKey.trim(), apiSecret.trim());
 
       if (result?.success) {
         setTestStatus('success');
@@ -281,9 +274,9 @@ export default function Settings() {
           className="text-xs mb-4"
           style={{ color: 'var(--text-secondary)' }}
         >
-          Your API credentials are intended to be stored locally.
-          Use only the permissions your bot requires, and never share
-          your API Secret.
+          Credentials saved here are encrypted by the API server. Alternatively,
+          configure them in the server environment. Use only the permissions your
+          bot requires, and never share your API Secret.
         </p>
 
         <div className="space-y-3">

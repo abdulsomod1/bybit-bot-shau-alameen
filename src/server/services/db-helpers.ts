@@ -76,16 +76,50 @@ export async function saveAds(sb: SupabaseClient, userId: string, ads: Record<st
   const { error } = await sb
     .from('ads')
     .upsert(rows, { onConflict: 'id' });
-  if (error) throw new Error(error.message);
+  if (!error) return;
+  if (!['22P02', 'PGRST204'].includes(error.code)) {
+    throw new Error(`saveAds: ${error.message}`);
+  }
+
+  const legacyRows = ads.map((ad) => ({
+    user_id: userId,
+    ad_id: String(ad.id),
+    account_id: ad.account_id,
+    direction: ad.direction,
+    asset: ad.asset,
+    fiat_currency: ad.fiat_currency,
+    price: ad.price,
+    available_quantity: ad.available_quantity,
+    min_order_amount: ad.min_order_amount,
+    max_order_amount: ad.max_order_amount,
+    status: ad.status,
+    last_update_time: ad.last_update_time,
+    payment_methods: ad.payment_methods,
+  }));
+  const { error: legacyError } = await sb
+    .from('ads')
+    .upsert(legacyRows, { onConflict: 'user_id,ad_id' });
+  if (legacyError) throw new Error(`saveAds: ${legacyError.message}`);
 }
 
 export async function updateAdSelected(sb: SupabaseClient, userId: string, adId: string, selected: boolean) {
-  const { error } = await sb
+  const { data, error } = await sb
     .from('ads')
     .update({ is_selected: selected })
     .eq('id', adId)
+    .eq('user_id', userId)
+    .select('id');
+  if (error && error.code !== '22P02') {
+    throw new Error(`updateAdSelected: ${error.message}`);
+  }
+  if (!error && data?.length) return;
+
+  const { error: legacyError } = await sb
+    .from('ads')
+    .update({ is_selected: selected })
+    .eq('ad_id', adId)
     .eq('user_id', userId);
-  if (error) throw new Error(error.message);
+  if (legacyError) throw new Error(`updateAdSelected: ${legacyError.message}`);
 }
 
 // ── Rankings ──────────────────────────────────────────────────────────────────

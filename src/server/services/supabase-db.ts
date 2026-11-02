@@ -78,6 +78,15 @@ export function maskApiKey(key: string): string {
   return key.length >= 8 ? `${key.slice(0, 4)}****${key.slice(-4)}` : '****';
 }
 
+export function getEnvCredentials(): { apiKey: string; apiSecret: string } | null {
+  const apiKey = process.env.BYBIT_API_KEY?.trim() ?? '';
+  const apiSecret = process.env.BYBIT_SECRET_KEY?.trim() ?? '';
+  if (Boolean(apiKey) !== Boolean(apiSecret)) {
+    throw new Error('BYBIT_API_KEY and BYBIT_SECRET_KEY must both be configured.');
+  }
+  return apiKey && apiSecret ? { apiKey, apiSecret } : null;
+}
+
 // ── Credential helpers (service role, no RLS) ────────────────────────────────
 
 /** Get credentials metadata only (no secret). Used by API route for display. */
@@ -130,11 +139,15 @@ export async function getCredentialsForBot(userId: string): Promise<{ apiKey: st
     .select('api_key, api_secret_encrypted, api_secret_iv, has_credentials')
     .eq('user_id', userId)
     .single();
-  if (error || !data) return null;
-  if (!data.has_credentials || !data.api_secret_encrypted || !data.api_secret_iv) return null;
-  try {
-    return { apiKey: data.api_key ?? '', apiSecret: decrypt(data.api_secret_encrypted, data.api_secret_iv) };
-  } catch {
-    throw new Error('Failed to decrypt API secret. Check RENDER_SERVICE_ENCRYPTION_KEY.');
+  if (error && error.code !== 'PGRST116') {
+    throw new Error(`getCredentialsForBot: ${error.message}`);
   }
+  if (data?.has_credentials && data.api_secret_encrypted && data.api_secret_iv) {
+    try {
+      return { apiKey: data.api_key ?? '', apiSecret: decrypt(data.api_secret_encrypted, data.api_secret_iv) };
+    } catch {
+      throw new Error('Failed to decrypt API secret. Check RENDER_SERVICE_ENCRYPTION_KEY.');
+    }
+  }
+  return getEnvCredentials();
 }

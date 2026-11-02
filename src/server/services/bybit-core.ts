@@ -31,13 +31,24 @@ export async function readResponse(response: Response): Promise<{ text: string; 
   return { text, data };
 }
 
+async function fetchBybit(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (error: unknown) {
+    const cause = error instanceof Error && error.cause instanceof Error
+      ? ` (${error.cause.message})`
+      : '';
+    throw new Error(`Bybit network request failed: ${error instanceof Error ? error.message : String(error)}${cause}`);
+  }
+}
+
 export async function apiReq(
   method: string, endpoint: string, params: ApiParams, key: string, secret: string,
 ): Promise<any> {
   const timestamp = Date.now().toString();
   const pStr = qs(normalizeParams(params));
   const sig = hmac(`${timestamp}${key}${RECV_WINDOW}${pStr}`, secret);
-  const response = await fetch(`${BYBIT_API_URL}${endpoint}${pStr ? `?${pStr}` : ''}`, {
+  const response = await fetchBybit(`${BYBIT_API_URL}${endpoint}${pStr ? `?${pStr}` : ''}`, {
     method,
     headers: {
       'X-BAPI-API-KEY': key, 'X-BAPI-SIGN': sig,
@@ -56,7 +67,7 @@ export async function p2pReq(
   const timestamp = Date.now().toString();
   const pStr = qs(normalizeParams(params));
   const sig = hmac(`${timestamp}${key}${RECV_WINDOW}${pStr}`, secret);
-  const response = await fetch(`${BYBIT_P2P_URL}${endpoint}${pStr ? `?${pStr}` : ''}`, {
+  const response = await fetchBybit(`${BYBIT_P2P_URL}${endpoint}${pStr ? `?${pStr}` : ''}`, {
     method,
     headers: {
       'X-BAPI-API-KEY': key, 'X-BAPI-SIGN': sig,

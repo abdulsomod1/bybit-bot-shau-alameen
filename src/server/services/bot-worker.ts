@@ -3,6 +3,7 @@
 // Single-user bot: only processes the bot owner's account.
 import { BOT_OWNER_ID } from '../middleware/auth.js';
 import {
+  getBotStateForWorker,
   getRulesForWorker as getRules,
   getAdsForWorker as getAds,
   saveRankingForWorker as saveRanking,
@@ -14,30 +15,40 @@ import { computeRankings, parsePrice, computeTargetPrice } from './bot-algorithm
 
 const POLL_INTERVAL = Math.max(10000, parseInt(process.env.BOT_POLL_INTERVAL ?? '60000', 10));
 let timer: ReturnType<typeof setInterval> | null = null;
+let isPolling = false;
 const OWNER_ID = BOT_OWNER_ID;
 
 // ── Per-user processing ───────────────────────────────────────────────────────
 
 async function processUser(userId: string): Promise<void> {
-  const creds = await (await import('./supabase-db.js')).getCredentialsForBot(userId);
-  if (!creds) return; // No credentials → skip (worker will report disconnected state)
-
-  const { apiKey, apiSecret } = creds;
-
   try {
+    const state = await getBotStateForWorker(userId);
+    if (state?.status !== 'running') return;
+
+    const creds = await (await import('./supabase-db.js')).getCredentialsForBot(userId);
+    if (!creds) {
+      await updateBotState(userId, {
+        status: 'error',
+        message: 'Save valid Bybit API credentials before starting the bot.',
+      });
+      return;
+    }
+
+    const { apiKey, apiSecret } = creds;
+
     // Load all data in parallel
     const [rules, ads] = await Promise.all([getRules(userId), getAds(userId)]);
-    const selectedAdIds = new Set(ads.filter((a: any) => a.is_selected).map((a: any) => a.id));
+    const selectedAdIds = new Set(ads.filter((a: any) => a.is_selected).map((a: any) => a.ad_id ?? a.id));
     if (selectedAdIds.size === 0) return;
 
     for (const rule of rules) {
       if (!rule.enabled) continue;
 
       const direction = rule.direction?.toUpperCase() as 'BUY' | 'SELL';
-      const myAd = ads.find((a: any) => selectedAdIds.has(a.id) && a.direction?.toUpperCase() === direction);
+      const myAd = ads.find((a: any) => selectedAdIds.has(a.ad_id ?? a.id) && a.direction?.toUpperCase() === direction);
       if (!myAd) continue;
 
-      const side = direction === 'BUY' ? 'Sell' : 'Buy';
+      const side = direction === 'BUY' ? 'Buy' : 'Sell';
       const marketAds = await fetchMarketAds(
         { side, asset: rule.asset ?? 'USDT', fiatCurrency: rule.fiat_currency ?? 'USD' },
         apiKey, apiSecret,
@@ -59,16 +70,17 @@ async function processUser(userId: string): Promise<void> {
       const currentPrice = parsePrice(myAd.price ?? '0');
       const targetPrice = computeTargetPrice(currentPrice, parsePrice(String(ranking.first.price ?? '0')), rule);
       if (!targetPrice) continue; // price unchanged
+      const bybitAdId = myAd.ad_id ?? myAd.id;
 
       if (!rule.dry_run) {
-        const result = await updateAdPrice(myAd.id, targetPrice, apiKey, apiSecret);
+        const result = await updateAdPrice(bybitAdId, targetPrice, apiKey, apiSecret);
         if (result.success) {
-          await addLog(userId, { level: 'success', category: 'pricing', message: `Updated ad ${myAd.id}: ${currentPrice}→${targetPrice}`, ad_id: myAd.id, previous_value: String(currentPrice), new_value: targetPrice }).catch(() => {});
+          await addLog(userId, { level: 'success', category: 'pricing', message: `Updated ad ${bybitAdId}: ${currentPrice}→${targetPrice}`, ad_id: bybitAdId, previous_value: String(currentPrice), new_value: targetPrice }).catch(() => {});
         } else {
-          await addLog(userId, { level: 'error', category: 'pricing', message: `Update failed ${myAd.id}: ${result.error}`, ad_id: myAd.id }).catch(() => {});
+          await addLog(userId, { level: 'error', category: 'pricing', message: `Update failed ${bybitAdId}: ${result.error}`, ad_id: bybitAdId }).catch(() => {});
         }
       } else {
-        await addLog(userId, { level: 'info', category: 'pricing', message: `[DRY] ${myAd.id}: ${currentPrice}→${targetPrice}`, ad_id: myAd.id }).catch(() => {});
+        await addLog(userId, { level: 'info', category: 'pricing', message: `[DRY] ${bybitAdId}: ${currentPrice}→${targetPrice}`, ad_id: bybitAdId }).catch(() => {});
       }
     }
 
@@ -83,11 +95,15 @@ async function processUser(userId: string): Promise<void> {
 // ── Master poll loop — single owner ─────────────────────────────────────────
 
 async function pollAll() {
+  if (isPolling) return;
+  isPolling = true;
   try {
     // Single-user: only process the owner
     await processUser(OWNER_ID);
   } catch (err: any) {
     console.error('[Bot Worker] Poll failed:', err.message);
+  } finally {
+    isPolling = false;
   }
 }
 

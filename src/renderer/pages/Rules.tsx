@@ -3,14 +3,14 @@ import { useApi } from '../hooks/useApi';
 const SL: Record<string, string> = { match_1st: 'Match #1', match_2nd: 'Match #2', match_3rd: 'Match #3', under_1st: 'Under #1', under_2nd: 'Under #2', under_3rd: 'Under #3', monitor_only: 'Monitor', fixed_offset: 'Fixed' };
 export default function Rules() {
   const { rules, saveRule, deleteRule } = useApi();
-  const [f, setF] = useState({ name: '', direction: 'BUY', asset: 'USDT', fiatCurrency: 'USD', strategy: 'match_3rd', pricePrecision: 2, maxChangePercent: 5, minIntervalMs: 60000, enabled: true, dryRun: false, manualApproval: false });
+  const [f, setF] = useState({ name: '', direction: 'BUY', asset: 'USDT', fiatCurrency: 'USD', strategy: 'match_3rd', pricePrecision: 2, maxChangePercent: 5, minIntervalMs: 60000, enabled: true, dryRun: true, manualApproval: false });
   const [edit, setEdit] = useState<any>(null), [open, setOpen] = useState(false);
-  const sub = async () => { if (!f.name) return; await saveRule({ ...f, id: edit?.id || `r_${Date.now()}` }); setOpen(false); setEdit(null); };
+  const sub = async () => { if (!f.name) return; await saveRule({ ...f, ...(edit?.id ? { id: edit.id } : {}) }); setOpen(false); setEdit(null); };
   return (
     <div className="space-y-5">
       <div className="flex justify-between items-center">
         <div><h2 className="text-2xl font-bold">Pricing Rules</h2><p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Configure auto-pricing for your ads</p></div>
-        <button onClick={() => { setF({ name: '', direction: 'BUY', asset: 'USDT', fiatCurrency: 'USD', strategy: 'match_3rd', pricePrecision: 2, maxChangePercent: 5, minIntervalMs: 60000, enabled: true, dryRun: false, manualApproval: false }); setEdit(null); setOpen(true); }} className="btn btn-primary text-sm">+ New Rule</button>
+        <button onClick={() => { setF({ name: '', direction: 'BUY', asset: 'USDT', fiatCurrency: 'USD', strategy: 'match_3rd', pricePrecision: 2, maxChangePercent: 5, minIntervalMs: 60000, enabled: true, dryRun: true, manualApproval: false }); setEdit(null); setOpen(true); }} className="btn btn-primary text-sm">+ New Rule</button>
       </div>
       {open && (
         <div className="card">

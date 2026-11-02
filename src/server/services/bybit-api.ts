@@ -23,8 +23,8 @@ export async function getBybitAds(params: { apiKey: string; apiSecret: string })
     const data = await p2pReq('GET', '/v2/otc/item/list', { side, asset: 'USDT', fiat: 'USD', page: 1, limit: 50 }, apiKey, apiSecret);
     (data?.list ?? []).forEach((ad: any) => {
       result.push({
-        id: ad.id, account_id: ad.account_id, userName: ad.user_nickname,
-        direction: ad.side, asset: ad.asset || 'USDT', fiat_currency: ad.fiat_ccy || ad.fiat_en,
+        id: ad.id, account_id: ad.account_id,
+        direction: String(ad.side).toUpperCase(), asset: ad.asset || 'USDT', fiat_currency: ad.fiat_ccy || ad.fiat_en,
         price: ad.price, available_quantity: ad.tradable_amount || ad.amount,
         min_order_amount: ad.min_amount, max_order_amount: ad.max_amount,
         status: ad.status === 1 ? 'online' : 'offline',
@@ -54,7 +54,7 @@ export async function fetchMarketAds(
   }
   return ads.map((ad: any) => ({
     id: ad.id, userName: ad.user_nickname, nickname: ad.user_nickname || 'Unknown',
-    direction: ad.side, asset: ad.asset, fiat_currency: ad.fiat_ccy || ad.fiat_en,
+    direction: String(ad.side).toUpperCase(), asset: ad.asset, fiat_currency: ad.fiat_ccy || ad.fiat_en,
     price: ad.price, available_quantity: ad.tradable_amount || ad.amount,
     min_order_amount: ad.min_amount, max_order_amount: ad.max_amount,
     payment_methods: ad.payment_names ? ad.payment_names.split(',') : [],

@@ -83,15 +83,15 @@ export const apiCredentials = {
     request<any>('POST', '/credentials', { apiKey, apiSecret }),
   delete: () => request<any>('DELETE', '/credentials'),
   test: (apiKey: string, apiSecret: string) =>
-    request<any>('POST', '/credentials/test', { apiKey, apiSecret }),
+    request<any>('POST', '/credentials/test', apiKey && apiSecret ? { apiKey, apiSecret } : undefined),
 };
 
 // ── Ads ───────────────────────────────────────────────────────────────────────
 
 export const apiAds = {
   get: () => request<any[]>('GET', '/ads'),
-  fetch: (apiKey: string, apiSecret: string) =>
-    request<any>('POST', '/ads/fetch', { apiKey, apiSecret }),
+  fetch: () =>
+    request<any>('POST', '/ads/fetch'),
   select: (adId: string, selected: boolean) =>
     request<any>('POST', '/ads/select', { adId, selected }),
 };

@@ -2,8 +2,23 @@ import { useState } from 'react';
 import { useApi } from '../hooks/useApi';
 
 export default function Ads() {
-  const { ads, toggleAdSelection } = useApi();
+  const { ads, toggleAdSelection, fetchAdsFromBybit, fetchAll } = useApi();
   const [filter, setFilter] = useState({ status: 'all', direction: 'all', search: '' });
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
+  const syncAds = async () => {
+    setSyncing(true);
+    setSyncMessage('');
+    try {
+      const result = await fetchAdsFromBybit();
+      await fetchAll();
+      setSyncMessage(`Synced ${result.count} advertisements.`);
+    } catch (error) {
+      setSyncMessage(error instanceof Error ? error.message : 'Could not sync advertisements.');
+    } finally {
+      setSyncing(false);
+    }
+  };
   const filtered = ads.filter(a => {
     if (filter.status !== 'all' && a.status !== filter.status) return false;
     if (filter.direction !== 'all' && a.direction !== filter.direction) return false;
@@ -13,7 +28,13 @@ export default function Ads() {
 
   return (
     <div className="space-y-5">
-      <div><h2 className="text-2xl font-bold">Advertisements</h2><p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>Select which ads the bot should manage</p></div>
+      <div className="flex items-start justify-between">
+        <div><h2 className="text-2xl font-bold">Advertisements</h2><p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>Select which ads the bot should manage</p></div>
+        <button className="btn btn-primary text-sm" onClick={syncAds} disabled={syncing}>
+          {syncing ? 'Syncing…' : 'Sync Bybit Ads'}
+        </button>
+      </div>
+      {syncMessage && <p role="status" className="text-sm" style={{ color: syncMessage.startsWith('Synced') ? 'var(--success)' : 'var(--danger)' }}>{syncMessage}</p>}
 
       <div className="flex gap-3">
         <input className="input max-w-xs" placeholder="Search ads..." value={filter.search} onChange={e => setFilter(f => ({ ...f, search: e.target.value }))} />
@@ -50,7 +71,7 @@ export default function Ads() {
                   <td>
                     <span className={`badge ${ad.status === 'online' ? 'badge-success' : ad.status === 'offline' ? 'badge-neutral' : 'badge-warning'}`}>{ad.status}</span>
                   </td>
-                  <td className="text-xs" style={{ color: 'var(--text-secondary)' }}>{(ad.paymentMethods || []).slice(0, 2).map((p: any) => p.name).join(', ') || '—'}</td>
+                  <td className="text-xs" style={{ color: 'var(--text-secondary)' }}>{(ad.paymentMethods || []).slice(0, 2).map((p: any) => typeof p === 'string' ? p : p?.name).filter(Boolean).join(', ') || '—'}</td>
                   <td>
                     <button onClick={() => toggleAdSelection(ad.id, !ad.isSelected)}
                       className={`btn text-xs py-1 px-2 ${ad.isSelected ? 'btn-success' : 'btn-ghost'}`}>

@@ -155,12 +155,7 @@ export function useApi() {
     fetchAll();
   }, [fetchAll]);
 
-  const fetchAdsFromBybit = useCallback(
-    async (apiKey: string, apiSecret: string) => {
-      return apiAds.fetch(apiKey, apiSecret);
-    },
-    [],
-  );
+  const fetchAdsFromBybit = useCallback(async () => apiAds.fetch(), []);
 
   return {
     status, ads, rules, rankings, logs, credentials, settings, botState,

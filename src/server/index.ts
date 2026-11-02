@@ -46,11 +46,6 @@ async function ensureOwnerRows() {
       data: { user_id: BOT_OWNER_ID, status: 'stopped' },
       conflictCol: 'user_id',
     },
-    {
-      name: 'api_credentials',
-      data: { user_id: BOT_OWNER_ID, has_credentials: false },
-      conflictCol: 'user_id',
-    },
   ];
 
   for (const { name, data, conflictCol } of tables) {

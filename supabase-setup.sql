@@ -35,9 +35,6 @@ BEGIN
   VALUES ('00000000-0000-4000-8000-000000000001', 'stopped')
   ON CONFLICT (user_id) DO NOTHING;
 
-  INSERT INTO public.api_credentials (user_id, has_credentials)
-  VALUES ('00000000-0000-4000-8000-000000000001', false)
-  ON CONFLICT (user_id) DO NOTHING;
 END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_api_credentials_user_id ON public.api_credentials(user_id);
