@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  apiSettings, apiCredentials, apiAds, apiRules, apiRankings, apiLogs, apiBotState,
+  apiSettings, apiCredentials, apiAds, apiRules, apiRankings, apiLogs, apiBotState, apiPendingUpdates,
   checkApiHealth,
 } from '../lib/api-client';
 
@@ -13,6 +13,7 @@ export function useApi() {
   const [credentials, setCredentials] = useState<any>(null);
   const [settings, setSettings] = useState<any>(null);
   const [botState, setBotState] = useState<any>(null);
+  const [pendingUpdates, setPendingUpdates] = useState<any[]>([]);
   const [apiServerOk, setApiServerOk] = useState<boolean>(true);
   const [apiError, setApiError] = useState<string | null>(null);
 
@@ -26,8 +27,9 @@ export function useApi() {
         apiLogs.get(),
         apiCredentials.get(),
         apiSettings.get(),
+        apiPendingUpdates.get(),
       ]);
-      const [st, ad, rl, rk, lg, cr, se] = results;
+      const [st, ad, rl, rk, lg, cr, se, pu] = results;
 
       const safe = (p: PromiseSettledResult<any>, fallback: any) =>
         p.status === 'fulfilled' ? p.value : fallback;
@@ -78,11 +80,16 @@ export function useApi() {
       setCredentials(safe(cr, { has_credentials: false }) ?? { has_credentials: false });
       setSettings(safe(se, null));
       setBotState(safe(st, null));
+      setPendingUpdates(safe(pu, []));
     } catch (e) {
       console.error('[useApi] fetchAll error', e);
       setApiServerOk(false);
       setApiError(e instanceof Error ? e.message : 'API error');
     }
+  }, []);
+
+  const refreshPendingUpdates = useCallback(async () => {
+    setPendingUpdates(await apiPendingUpdates.get());
   }, []);
 
   // Auto-refetch when user changes
@@ -148,6 +155,18 @@ export function useApi() {
     fetchAll();
   }, [fetchAll]);
 
+  const approvePendingUpdate = useCallback(async (id: string) => {
+    const result = await apiPendingUpdates.approve(id);
+    await fetchAll();
+    return result;
+  }, [fetchAll]);
+
+  const rejectPendingUpdate = useCallback(async (id: string) => {
+    const result = await apiPendingUpdates.reject(id);
+    await fetchAll();
+    return result;
+  }, [fetchAll]);
+
   const refreshRankings = useCallback(async () => {
     // Trigger a fresh fetch of rankings (server will re-fetch from Bybit)
     fetchAll();
@@ -173,9 +192,10 @@ export function useApi() {
   const fetchAdsFromBybit = useCallback(async () => apiAds.fetch(), []);
 
   return {
-    status, ads, rules, rankings, logs, credentials, settings, botState,
+    status, ads, rules, rankings, logs, credentials, settings, botState, pendingUpdates,
     fetchAll, saveCredentials, saveSettings, saveRule, deleteRule,
     toggleAdSelection, startBot, pauseBot, resumeBot, stopBot,
+    approvePendingUpdate, rejectPendingUpdate, refreshPendingUpdates,
     refreshRankings, testCredentials, deleteCredentials, clearLogs, fetchAdsFromBybit,
     apiServerOk, apiError,
   };

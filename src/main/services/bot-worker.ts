@@ -1,6 +1,6 @@
 import log from 'electron-log';
 import { BrowserWindow } from 'electron';
-import { getRules, getAds, updateBotState, addLog, saveRanking, saveAds, getRankings, getAppSettings, getBotState } from './database';
+import { getRules, getAds, getLogs, updateBotState, addLog, saveRanking, saveAds, getRankings, getAppSettings, getBotState } from './database';
 import { fetchMyAds, fetchMarketAds, updateAdPrice } from './bybit-api';
 import { getCurrentPublicIP } from './ip-monitor';
 import { rankCompetitors, buildMarketKey } from './ranking';
@@ -56,6 +56,7 @@ async function processRules(apiKey: string, apiSecret: string): Promise<void> {
   const rules = getRules().filter((r: any) => r.enabled && r.strategy !== 'monitor_only');
   if (!rules.length) return;
   const ads = getAds().filter((a: any) => a.isSelected);
+  const recentLogs = getLogs({ limit: 10000 });
   if (!ads.length) { addLog({ level: 'warning', category: 'bot', message: 'No ads selected' }); return; }
   for (const rule of rules) {
     const matchingAds = ads.filter((a: any) => a.direction === rule.direction && a.asset === rule.asset && a.fiatCurrency === rule.fiatCurrency);
@@ -70,12 +71,20 @@ async function processRules(apiKey: string, apiSecret: string): Promise<void> {
       if (!canUpdateAd(rule, ad.id)) continue;
       const cp = parseFloat(ad.price), tp = result.price;
       if (isNaN(cp) || isNaN(tp)) continue;
+      const updates = recentLogs.filter((entry: any) => entry.level === 'success' && entry.category === 'bot' && entry.adId === ad.id);
+      const now = Date.now();
+      const hourCount = updates.filter((entry: any) => now - Date.parse(entry.timestamp) < 60 * 60 * 1000).length;
+      const dayCount = updates.filter((entry: any) => now - Date.parse(entry.timestamp) < 24 * 60 * 60 * 1000).length;
+      if (rule.maxUpdatesPerHour > 0 && hourCount >= rule.maxUpdatesPerHour) continue;
+      if (rule.maxUpdatesPerDay > 0 && dayCount >= rule.maxUpdatesPerDay) continue;
       const cOk = validatePriceChange(cp, tp, rule.maxChangePercent);
       if (!cOk.valid) continue;
       const dev = Math.abs((tp - cp) / cp * 100);
       if (rule.maxDeviationPercent && dev > rule.maxDeviationPercent) continue;
       const prec = rule.pricePrecision || 2;
       if (Math.abs(tp - cp) < Math.pow(10, -prec)) continue;
+      const lastSuccess = updates.reduce((latest: number, entry: any) => Math.max(latest, Date.parse(entry.timestamp) || 0), 0);
+      if (rule.minIntervalMs > 0 && lastSuccess && now - lastSuccess < rule.minIntervalMs) continue;
       addLog({ level: 'info', category: 'pricing', message: `Ad ${ad.id}: ${cp}->${tp} (${result.reason})`, previousValue: String(cp), newValue: String(tp), adId: ad.id });
       if (rule.dryRun) { addLog({ level: 'info', category: 'bot', message: `[DRY RUN] Update ad ${ad.id} to ${tp}`, adId: ad.id }); markAdUpdated(ad.id); continue; }
       if (rule.manualApproval) { addLog({ level: 'info', category: 'bot', message: `[PENDING] Ad ${ad.id} -> ${tp}`, adId: ad.id }); emit('pending-update', { adId: ad.id, targetPrice: tp, currentPrice: cp, ruleName: rule.name }); continue; }

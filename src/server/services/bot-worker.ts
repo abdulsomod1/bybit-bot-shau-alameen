@@ -4,18 +4,23 @@
 import { BOT_OWNER_ID } from '../middleware/auth.js';
 import {
   getBotStateForWorker,
+  getSettingsForWorker,
   getRulesForWorker as getRules,
-  getAdsForWorker as getAds,
+  syncAdsForWorker,
+  countUpdatesForWorker,
+  updateAdForWorker,
   saveRankingForWorker as saveRanking,
   addLogForWorker as addLog,
   updateBotStateForWorker as updateBotState,
 } from '../routes/api-handlers.js';
-import { fetchMarketAds, updateAdPrice } from './bybit-api.js';
+import { fetchMarketAds, getBybitAds, updateAdPrice } from './bybit-api.js';
 import { computeRankings, parsePrice, computeTargetPrice } from './bot-algorithms.js';
+import { queuePendingUpdate } from './pending-updates.js';
 
-const POLL_INTERVAL = Math.max(10000, parseInt(process.env.BOT_POLL_INTERVAL ?? '60000', 10));
-let timer: ReturnType<typeof setInterval> | null = null;
+const DEFAULT_POLL_INTERVAL = Math.max(10000, parseInt(process.env.BOT_POLL_INTERVAL ?? '60000', 10));
+let timer: ReturnType<typeof setTimeout> | null = null;
 let isPolling = false;
+let workerEnabled = false;
 const OWNER_ID = BOT_OWNER_ID;
 
 // ── Per-user processing ───────────────────────────────────────────────────────
@@ -37,54 +42,100 @@ async function processUser(userId: string): Promise<void> {
     const { apiKey, apiSecret } = creds;
 
     // Load all data in parallel
-    const [rules, ads] = await Promise.all([getRules(userId), getAds(userId)]);
-    const selectedAdIds = new Set(ads.filter((a: any) => a.is_selected).map((a: any) => a.ad_id ?? a.id));
-    if (selectedAdIds.size === 0) return;
+    const [rules, liveAds] = await Promise.all([
+      getRules(userId),
+      getBybitAds(creds),
+    ]);
+    const ads = await syncAdsForWorker(userId, liveAds);
+    const selectedAds = ads.filter((a: any) => a.is_selected);
+    if (selectedAds.length === 0) return;
+    const ownedAdIds = new Set(ads.map((a: any) => String(a.ad_id ?? a.id)));
 
     for (const rule of rules) {
       if (!rule.enabled) continue;
 
       const direction = rule.direction?.toUpperCase() as 'BUY' | 'SELL';
-      const myAd = ads.find((a: any) => selectedAdIds.has(a.ad_id ?? a.id) && a.direction?.toUpperCase() === direction);
-      if (!myAd) continue;
+      const asset = String(rule.asset ?? 'USDT').toUpperCase();
+      const fiatCurrency = String(rule.fiat_currency ?? 'USD').toUpperCase();
+      const matchingAds = selectedAds.filter((ad: any) =>
+        ad.direction?.toUpperCase() === direction &&
+        String(ad.asset ?? '').toUpperCase() === asset &&
+        String(ad.fiat_currency ?? ad.fiatCurrency ?? '').toUpperCase() === fiatCurrency &&
+        String(ad.status ?? '').toLowerCase() === 'online',
+      );
+      if (!matchingAds.length) continue;
 
       const side = direction === 'BUY' ? 'Buy' : 'Sell';
       const marketAds = await fetchMarketAds(
-        { side, asset: rule.asset ?? 'USDT', fiatCurrency: rule.fiat_currency ?? 'USD' },
+        { side, asset, fiatCurrency, paymentMethodIds: rule.payment_method_ids },
         apiKey, apiSecret,
-      ).catch((e: any) => { console.warn(`[Bot ${userId}] market fetch: ${e.message}`); return [] as any[]; });
+      );
 
-      const ranking = computeRankings(marketAds, direction);
+      const ranking = computeRankings(marketAds.filter((ad: any) => !ownedAdIds.has(String(ad.id))), direction);
 
       // Save ranking snapshot
       await saveRanking(userId, {
-        market_key: `${direction}_${rule.asset}_${rule.fiat_currency}`,
-        direction, asset: rule.asset, fiat_currency: rule.fiat_currency,
+        market_key: `${direction}_${asset}_${fiatCurrency}`,
+        direction, asset, fiat_currency: fiatCurrency,
         competitors: ranking.competitors.map((c: any) => ({ id: c.id, price: c.price })),
         first_ranked: ranking.first, second_ranked: ranking.second, third_ranked: ranking.third,
         last_refresh: new Date().toISOString(), data_stale: false,
       }).catch(() => {});
 
-      if (!ranking.first) continue;
+      if (!ranking.competitors.length) continue;
 
-      const currentPrice = parsePrice(myAd.price ?? '0');
-      const targetPrice = computeTargetPrice(currentPrice, parsePrice(String(ranking.first.price ?? '0')), rule);
-      if (!targetPrice) continue; // price unchanged
-      const bybitAdId = myAd.ad_id ?? myAd.id;
+      for (const myAd of matchingAds) {
+        const bybitAdId = String(myAd.ad_id ?? myAd.id);
+        const currentPrice = parsePrice(String(myAd.price ?? '0'));
+        const targetPrice = computeTargetPrice(currentPrice, ranking, rule);
+        if (!targetPrice) continue;
 
-      if (!rule.dry_run) {
-        const result = await updateAdPrice(bybitAdId, targetPrice, apiKey, apiSecret);
+        if (rule.dry_run) {
+          await addLog(userId, { level: 'info', category: 'pricing', message: `[DRY] ${bybitAdId}: ${currentPrice} -> ${targetPrice}`, ad_id: bybitAdId }).catch(() => {});
+          continue;
+        }
+
+        const lastUpdate = Date.parse(String(myAd.last_update_time ?? ''));
+        const minIntervalMs = Number(rule.min_interval_ms ?? 0);
+        if (Number.isFinite(lastUpdate) && minIntervalMs > 0 && Date.now() - lastUpdate < minIntervalMs) continue;
+
+        const hourCount = await countUpdatesForWorker(userId, bybitAdId, Date.now() - 60 * 60 * 1000);
+        const dayCount = await countUpdatesForWorker(userId, bybitAdId, Date.now() - 24 * 60 * 60 * 1000);
+        if (Number(rule.max_updates_per_hour) > 0 && hourCount >= Number(rule.max_updates_per_hour)) continue;
+        if (Number(rule.max_updates_per_day) > 0 && dayCount >= Number(rule.max_updates_per_day)) continue;
+
+        if (rule.manual_approval) {
+          const queued = queuePendingUpdate({
+            userId, adId: bybitAdId, ruleId: String(rule.id), ruleName: String(rule.name),
+            currentPrice, targetPrice,
+          });
+          if (queued) {
+            await addLog(userId, { level: 'info', category: 'safety', message: `Approval requested for ad ${bybitAdId}: ${currentPrice} -> ${targetPrice}`, ad_id: bybitAdId, previous_value: String(currentPrice), new_value: targetPrice }).catch(() => {});
+          }
+          continue;
+        }
+
+        const latestState = await getBotStateForWorker(userId);
+        if (latestState?.status !== 'running') return;
+        const result = await updateAdPrice(myAd, targetPrice, apiKey, apiSecret);
         if (result.success) {
-          await addLog(userId, { level: 'success', category: 'pricing', message: `Updated ad ${bybitAdId}: ${currentPrice}→${targetPrice}`, ad_id: bybitAdId, previous_value: String(currentPrice), new_value: targetPrice }).catch(() => {});
+          await updateAdForWorker(userId, bybitAdId, targetPrice);
+          myAd.price = targetPrice;
+          myAd.last_update_time = new Date().toISOString();
+          await addLog(userId, { level: 'success', category: 'pricing', message: `Updated ad ${bybitAdId}: ${currentPrice} -> ${targetPrice}`, ad_id: bybitAdId, previous_value: String(currentPrice), new_value: targetPrice }).catch(() => {});
+          const currentState = await getBotStateForWorker(userId);
+          await updateBotState(userId, {
+            last_successful_update: new Date().toISOString(),
+            update_count: Number(currentState?.update_count ?? 0) + 1,
+            error_count: 0,
+          });
         } else {
           await addLog(userId, { level: 'error', category: 'pricing', message: `Update failed ${bybitAdId}: ${result.error}`, ad_id: bybitAdId }).catch(() => {});
         }
-      } else {
-        await addLog(userId, { level: 'info', category: 'pricing', message: `[DRY] ${bybitAdId}: ${currentPrice}→${targetPrice}`, ad_id: bybitAdId }).catch(() => {});
       }
     }
 
-    await updateBotState(userId, { status: 'running', last_successful_update: new Date().toISOString(), error_count: 0 }).catch(() => {});
+    await updateBotState(userId, { error_count: 0 }).catch(() => {});
   } catch (err: any) {
     console.error(`[Bot ${userId}]`, err.message);
     await addLog(userId, { level: 'error', category: 'bot', message: `Bot error: ${err.message}` }).catch(() => {});
@@ -104,18 +155,40 @@ async function pollAll() {
     console.error('[Bot Worker] Poll failed:', err.message);
   } finally {
     isPolling = false;
+    if (workerEnabled) {
+      let interval = DEFAULT_POLL_INTERVAL;
+      try {
+        const settings = await getSettingsForWorker(OWNER_ID);
+        const configured = Number(settings?.polling_interval_ms);
+        if (Number.isFinite(configured) && configured > 0) interval = Math.max(10000, Math.min(3600000, configured));
+      } catch (err: any) {
+        console.warn('[Bot Worker] Could not load polling interval:', err.message);
+      }
+      timer = setTimeout(() => {
+        timer = null;
+        void pollAll();
+      }, interval);
+    }
   }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function initializeBotWorker(): void {
-  if (timer) return;
-  console.log(`[Bot Worker] Starting — interval: ${POLL_INTERVAL / 1000}s (owner: ${OWNER_ID})`);
-  timer = setInterval(pollAll, POLL_INTERVAL);
+  if (workerEnabled) return;
+  workerEnabled = true;
+  console.log(`[Bot Worker] Starting — owner: ${OWNER_ID}`);
   pollAll().catch((e: any) => console.error('[Bot Worker] Initial poll:', e.message));
 }
 
+export function wakeBotWorker(): void {
+  if (!workerEnabled) return;
+  if (timer) { clearTimeout(timer); timer = null; }
+  void pollAll();
+}
+
 export function stopBotWorker(): void {
-  if (timer) { clearInterval(timer); timer = null; console.log('[Bot Worker] Stopped'); }
+  workerEnabled = false;
+  if (timer) { clearTimeout(timer); timer = null; }
+  console.log('[Bot Worker] Stopped');
 }

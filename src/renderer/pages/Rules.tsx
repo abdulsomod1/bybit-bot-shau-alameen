@@ -1,16 +1,16 @@
 import { useState } from 'react';
 import { useApi } from '../hooks/useApi';
-const SL: Record<string, string> = { match_1st: 'Match #1', match_2nd: 'Match #2', match_3rd: 'Match #3', under_1st: 'Under #1', under_2nd: 'Under #2', under_3rd: 'Under #3', monitor_only: 'Monitor', fixed_offset: 'Fixed' };
+const SL: Record<string, string> = { match_1st: 'Match #1', match_2nd: 'Match #2', match_3rd: 'Match #3', under_1st: 'Under #1', under_2nd: 'Under #2', under_3rd: 'Under #3', monitor_only: 'Monitor', fixed_offset: 'Offset', fixed: 'Fixed price' };
 export default function Rules() {
   const { rules, saveRule, deleteRule } = useApi();
-  const [f, setF] = useState({ name: '', direction: 'BUY', asset: 'USDT', fiatCurrency: 'USD', strategy: 'match_3rd', pricePrecision: 2, maxChangePercent: 5, minIntervalMs: 60000, enabled: true, dryRun: true, manualApproval: false });
+  const [f, setF] = useState({ name: '', direction: 'BUY', asset: 'USDT', fiatCurrency: 'USD', strategy: 'match_3rd', pricePrecision: 2, maxChangePercent: 5, minIntervalMs: 60000, enabled: true, dryRun: true, manualApproval: false, fixedPrice: 0, offsetAmount: 0, offsetType: 'fixed', targetPosition: 1 });
   const [edit, setEdit] = useState<any>(null), [open, setOpen] = useState(false);
   const sub = async () => { if (!f.name) return; await saveRule({ ...f, ...(edit?.id ? { id: edit.id } : {}) }); setOpen(false); setEdit(null); };
   return (
     <div className="space-y-5">
       <div className="flex justify-between items-center">
         <div><h2 className="text-2xl font-bold">Pricing Rules</h2><p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Configure auto-pricing for your ads</p></div>
-        <button onClick={() => { setF({ name: '', direction: 'BUY', asset: 'USDT', fiatCurrency: 'USD', strategy: 'match_3rd', pricePrecision: 2, maxChangePercent: 5, minIntervalMs: 60000, enabled: true, dryRun: true, manualApproval: false }); setEdit(null); setOpen(true); }} className="btn btn-primary text-sm">+ New Rule</button>
+        <button onClick={() => { setF({ name: '', direction: 'BUY', asset: 'USDT', fiatCurrency: 'USD', strategy: 'match_3rd', pricePrecision: 2, maxChangePercent: 5, minIntervalMs: 60000, enabled: true, dryRun: true, manualApproval: false, fixedPrice: 0, offsetAmount: 0, offsetType: 'fixed', targetPosition: 1 }); setEdit(null); setOpen(true); }} className="btn btn-primary text-sm">+ New Rule</button>
       </div>
       {open && (
         <div className="card">
@@ -21,6 +21,12 @@ export default function Rules() {
             <select className="select" value={f.asset} onChange={e => setF(x => ({ ...x, asset: e.target.value }))}><option>USDT</option><option>BTC</option><option>ETH</option><option>USDC</option></select>
             <select className="select" value={f.fiatCurrency} onChange={e => setF(x => ({ ...x, fiatCurrency: e.target.value }))}><option>USD</option><option>EUR</option><option>GBP</option><option>BRL</option><option>ARS</option><option>TRY</option></select>
             <select className="select col-span-2" value={f.strategy} onChange={e => setF(x => ({ ...x, strategy: e.target.value }))}>{Object.entries(SL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+            {f.strategy === 'fixed' && <input type="number" min="0" step="any" className="input col-span-2" aria-label="Fixed price" placeholder="Fixed price" value={f.fixedPrice || ''} onChange={e => setF(x => ({ ...x, fixedPrice: Number(e.target.value) || 0 }))} />}
+            {f.strategy === 'fixed_offset' && <>
+              <input type="number" min="1" max="300" className="input" aria-label="Competitor rank" placeholder="Competitor rank" value={f.targetPosition} onChange={e => setF(x => ({ ...x, targetPosition: Math.max(1, Number(e.target.value) || 1) }))} />
+              <input type="number" step="any" className="input" aria-label="Price offset" placeholder="Price offset" value={f.offsetAmount} onChange={e => setF(x => ({ ...x, offsetAmount: Number(e.target.value) || 0 }))} />
+              <select className="select col-span-2" aria-label="Offset type" value={f.offsetType} onChange={e => setF(x => ({ ...x, offsetType: e.target.value }))}><option value="fixed">Fixed amount</option><option value="percentage">Percentage</option></select>
+            </>}
             <input type="number" className="input" placeholder="Max % change/update" value={f.maxChangePercent} onChange={e => setF(x => ({ ...x, maxChangePercent: parseFloat(e.target.value) || 5 }))} />
             <input type="number" className="input" placeholder="Min interval (sec)" value={f.minIntervalMs / 1000} onChange={e => setF(x => ({ ...x, minIntervalMs: (parseInt(e.target.value) || 0) * 1000 }))} />
             <div className="col-span-2 flex gap-4">

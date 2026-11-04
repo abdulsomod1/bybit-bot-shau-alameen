@@ -11,6 +11,7 @@ import {
   handleGetRankings,
   handleGetLogs, handleClearLogs,
   handleGetBotState, handleUpdateBotState,
+  handleGetPendingUpdates, handleApprovePendingUpdate, handleRejectPendingUpdate,
 } from './api-handlers.js';
 
 // Apply owner token check + set bot owner ID on all routes
@@ -49,4 +50,9 @@ export function registerApiRoutes(app: Express) {
   // Bot state
   app.get('/api/bot-state', ...auth(handleGetBotState));
   app.post('/api/bot-state', ...auth(handleUpdateBotState));
+
+  // Manual price approvals
+  app.get('/api/pending-updates', ...auth(handleGetPendingUpdates));
+  app.post('/api/pending-updates/:id/approve', ...auth(handleApprovePendingUpdate));
+  app.delete('/api/pending-updates/:id', ...auth(handleRejectPendingUpdate));
 }

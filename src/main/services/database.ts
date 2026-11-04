@@ -126,7 +126,11 @@ export function clearLogs(): void { run('DELETE FROM activity_logs', []); }
 
 export function getRankings(): any[] {
   return getAll('SELECT * FROM rankings ORDER BY last_refresh DESC').map((r: any) => ({
-    ...r, competitors: r.competitors ? JSON.parse(r.competitors) : [], dataStale: Boolean(r.data_stale),
+    ...r,
+    marketKey: r.market_key,
+    lastRefresh: r.last_refresh,
+    competitors: r.competitors ? JSON.parse(r.competitors) : [],
+    dataStale: Boolean(r.data_stale),
   }));
 }
 

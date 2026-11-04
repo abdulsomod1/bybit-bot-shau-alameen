@@ -95,6 +95,7 @@ export async function saveAds(sb: SupabaseClient, userId: string, ads: Record<st
     status: ad.status,
     last_update_time: ad.last_update_time,
     payment_methods: ad.payment_methods,
+    is_selected: ad.is_selected ?? false,
   }));
   const { error: legacyError } = await sb
     .from('ads')

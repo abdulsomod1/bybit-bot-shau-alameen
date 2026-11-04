@@ -9,90 +9,6 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ============================================================
--- 0. FIXED BOT OWNER USER
--- The bot uses this UUID for all database records.
--- DO NOT change this. All other user management is disabled.
--- ============================================================
-DO $$
-BEGIN
-  INSERT INTO public.users (id, email, name)
-  VALUES ('00000000-0000-4000-8000-000000000001', 'bot@owner.local', 'Bot Owner')
-  ON CONFLICT (id) DO NOTHING;
-END $$;
-
--- Ensure related records exist for the owner
-DO $$
-BEGIN
-  INSERT INTO public.profiles (id, display_name)
-  VALUES ('00000000-0000-4000-8000-000000000001', 'Bot Owner')
-  ON CONFLICT (id) DO NOTHING;
-
-  INSERT INTO public.bot_settings (user_id)
-  VALUES ('00000000-0000-4000-8000-000000000001')
-  ON CONFLICT (user_id) DO NOTHING;
-
-  INSERT INTO public.bot_state (user_id, status)
-  VALUES ('00000000-0000-4000-8000-000000000001', 'stopped')
-  ON CONFLICT (user_id) DO NOTHING;
-
-END $$;
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_api_credentials_user_id ON public.api_credentials(user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_pricing_rules_user_id ON public.pricing_rules(user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_ads_user_id ON public.ads(user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_competitor_rankings_user_id ON public.competitor_rankings(user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_activity_logs_user_id ON public.activity_logs(user_id);
-
--- ============================================================
--- SECURE CREDENTIAL STORAGE FUNCTION
--- ============================================================
--- Uses SECURITY DEFINER so the service role bypasses RLS.
--- Called ONLY from the Express server (never from the browser).
--- The service role key is kept server-side only.
--- ============================================================
-CREATE OR REPLACE FUNCTION public.save_api_credentials(
-  p_user_id          UUID,
-  p_api_key          TEXT,
-  p_api_key_masked   TEXT,
-  p_api_secret_encrypted TEXT,
-  p_api_secret_iv    TEXT,
-  p_has_credentials  BOOLEAN,
-  p_registered_ip    TEXT
-)
-RETURNS VOID
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-BEGIN
-  INSERT INTO public.api_credentials (
-    user_id, api_key, api_key_masked,
-    api_secret_encrypted, api_secret_iv,
-    has_credentials, registered_ip,
-    updated_at
-  )
-  VALUES (
-    p_user_id, p_api_key, p_api_key_masked,
-    p_api_secret_encrypted, p_api_secret_iv,
-    p_has_credentials, p_registered_ip,
-    NOW()
-  )
-  ON CONFLICT (user_id) DO UPDATE SET
-    api_key            = EXCLUDED.api_key,
-    api_key_masked     = EXCLUDED.api_key_masked,
-    api_secret_encrypted = EXCLUDED.api_secret_encrypted,
-    api_secret_iv      = EXCLUDED.api_secret_iv,
-    has_credentials    = EXCLUDED.has_credentials,
-    registered_ip      = EXCLUDED.registered_ip,
-    updated_at         = NOW();
-END;
-$$;
-
-GRANT EXECUTE ON FUNCTION public.save_api_credentials(
-  UUID, TEXT, TEXT, TEXT, TEXT, BOOLEAN, TEXT
-) TO service_role;
-
--- ============================================================
 -- 1. USERS TABLE (custom user registry)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.users (
@@ -186,9 +102,9 @@ CREATE TABLE IF NOT EXISTS public.pricing_rules (
     max_updates_per_day    INTEGER DEFAULT 500,
     price_precision        INTEGER DEFAULT 2,
     max_deviation_percent  NUMERIC DEFAULT 10,
-    manual_approval        BOOLEAN DEFAULT false,
-    dry_run                BOOLEAN DEFAULT false,
-    enabled                BOOLEAN DEFAULT true,
+    manual_approval        BOOLEAN DEFAULT true,
+    dry_run                BOOLEAN DEFAULT true,
+    enabled                BOOLEAN DEFAULT false,
     payment_method_ids     TEXT[],
     target_position        INTEGER,
     price_offset           NUMERIC,
@@ -260,10 +176,34 @@ CREATE TABLE IF NOT EXISTS public.activity_logs (
     created_at     TIMESTAMPTZ DEFAULT NOW()
 );
 
+ALTER TABLE public.pricing_rules ALTER COLUMN manual_approval SET DEFAULT true;
+ALTER TABLE public.pricing_rules ALTER COLUMN dry_run SET DEFAULT true;
+ALTER TABLE public.pricing_rules ALTER COLUMN enabled SET DEFAULT false;
+
 -- ============================================================
 -- INDEXES
 -- ============================================================
-CREATE INDEX IF NOT EXISTS idx_api_credentials_user_id ON public.api_credentials(user_id);
+INSERT INTO public.users (id, email, name)
+VALUES ('00000000-0000-4000-8000-000000000001', 'bot@owner.local', 'Bot Owner')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO public.profiles (id, display_name)
+VALUES ('00000000-0000-4000-8000-000000000001', 'Bot Owner')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO public.bot_settings (user_id)
+VALUES ('00000000-0000-4000-8000-000000000001')
+ON CONFLICT (user_id) DO NOTHING;
+
+INSERT INTO public.bot_state (user_id, status)
+VALUES ('00000000-0000-4000-8000-000000000001', 'stopped')
+ON CONFLICT (user_id) DO NOTHING;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_credentials_user_id ON public.api_credentials(user_id);
+DROP INDEX IF EXISTS public.idx_pricing_rules_user_id;
+DROP INDEX IF EXISTS public.idx_ads_user_id;
+DROP INDEX IF EXISTS public.idx_competitor_rankings_user_id;
+DROP INDEX IF EXISTS public.idx_activity_logs_user_id;
 CREATE INDEX IF NOT EXISTS idx_pricing_rules_user_id ON public.pricing_rules(user_id);
 CREATE INDEX IF NOT EXISTS idx_ads_user_id ON public.ads(user_id);
 CREATE INDEX IF NOT EXISTS idx_competitor_rankings_user_id ON public.competitor_rankings(user_id);
@@ -286,55 +226,14 @@ ALTER TABLE public.ads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.competitor_rankings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.activity_logs ENABLE ROW LEVEL SECURITY;
 
--- USERS policies
-CREATE POLICY "Users can view own" ON public.users FOR SELECT USING (auth.uid() = id);
-CREATE POLICY "Users can update own" ON public.users FOR UPDATE USING (auth.uid() = id);
-
--- PROFILES policies
-CREATE POLICY "Users can view own profile" ON public.profiles FOR SELECT USING (id = auth.uid());
-CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (id = auth.uid());
-CREATE POLICY "Users can insert own profile" ON public.profiles FOR INSERT WITH CHECK (id = auth.uid());
-
--- BOT SETTINGS policies
-CREATE POLICY "Users can view settings" ON public.bot_settings FOR SELECT USING (user_id = auth.uid());
-CREATE POLICY "Users can insert settings" ON public.bot_settings FOR INSERT WITH CHECK (user_id = auth.uid());
-CREATE POLICY "Users can update settings" ON public.bot_settings FOR UPDATE USING (user_id = auth.uid());
-
--- BOT STATE policies
-CREATE POLICY "Users can view bot state" ON public.bot_state FOR SELECT USING (user_id = auth.uid());
-CREATE POLICY "Users can insert bot state" ON public.bot_state FOR INSERT WITH CHECK (user_id = auth.uid());
-CREATE POLICY "Users can update bot state" ON public.bot_state FOR UPDATE USING (user_id = auth.uid());
-
--- API CREDENTIALS policies
-CREATE POLICY "Users can view credentials" ON public.api_credentials FOR SELECT USING (user_id = auth.uid());
-CREATE POLICY "Users can insert credentials" ON public.api_credentials FOR INSERT WITH CHECK (user_id = auth.uid());
-CREATE POLICY "Users can update credentials" ON public.api_credentials FOR UPDATE USING (user_id = auth.uid());
-CREATE POLICY "Users can delete credentials" ON public.api_credentials FOR DELETE USING (user_id = auth.uid());
-
--- PRICING RULES policies
-CREATE POLICY "Users can view rules" ON public.pricing_rules FOR SELECT USING (user_id = auth.uid());
-CREATE POLICY "Users can insert rules" ON public.pricing_rules FOR INSERT WITH CHECK (user_id = auth.uid());
-CREATE POLICY "Users can update rules" ON public.pricing_rules FOR UPDATE USING (user_id = auth.uid());
-CREATE POLICY "Users can delete rules" ON public.pricing_rules FOR DELETE USING (user_id = auth.uid());
-
--- ADS policies
-CREATE POLICY "Users can view ads" ON public.ads FOR SELECT USING (user_id = auth.uid());
-CREATE POLICY "Users can insert ads" ON public.ads FOR INSERT WITH CHECK (user_id = auth.uid());
-CREATE POLICY "Users can update ads" ON public.ads FOR UPDATE USING (user_id = auth.uid());
-CREATE POLICY "Users can delete ads" ON public.ads FOR DELETE USING (user_id = auth.uid());
-
--- COMPETITOR RANKINGS policies
-CREATE POLICY "Users can view rankings" ON public.competitor_rankings FOR SELECT USING (user_id = auth.uid());
-CREATE POLICY "Users can insert rankings" ON public.competitor_rankings FOR INSERT WITH CHECK (user_id = auth.uid());
-CREATE POLICY "Users can update rankings" ON public.competitor_rankings FOR UPDATE USING (user_id = auth.uid());
-CREATE POLICY "Users can delete rankings" ON public.competitor_rankings FOR DELETE USING (user_id = auth.uid());
-
--- ACTIVITY LOGS policies
-CREATE POLICY "Users can view logs" ON public.activity_logs FOR SELECT USING (user_id = auth.uid());
-CREATE POLICY "Users can insert logs" ON public.activity_logs FOR INSERT WITH CHECK (user_id = auth.uid());
-CREATE POLICY "Users can delete logs" ON public.activity_logs FOR DELETE USING (user_id = auth.uid());
-
-
+DROP POLICY IF EXISTS "Public access" ON public.pricing_rules;
+DROP POLICY IF EXISTS "Public access" ON public.ads;
+DROP POLICY IF EXISTS "Public access" ON public.competitor_rankings;
+DROP POLICY IF EXISTS "Public access" ON public.activity_logs;
+DROP POLICY IF EXISTS "Public access" ON public.bot_state;
+DROP POLICY IF EXISTS "Public access" ON public.bot_settings;
+DROP POLICY IF EXISTS "Public access" ON public.api_credentials;
+DROP POLICY IF EXISTS "Public access" ON public.profiles;
 
 -- ============================================================
 -- HELPER FUNCTIONS (bypass RLS for server-side operations)
@@ -362,7 +261,7 @@ BEGIN
         registered_ip = EXCLUDED.registered_ip,
         updated_at = NOW();
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- Grant execute on helper functions
 GRANT EXECUTE ON FUNCTION public.save_api_credentials TO service_role;
@@ -387,16 +286,6 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 GRANT EXECUTE ON FUNCTION public.add_activity_log TO service_role;
 
 -- ============================================================
--- SERVICE ROLE BYPASS (server-side operations)
--- ============================================================
-CREATE POLICY "Service role can do everything on api_credentials" ON public.api_credentials FOR ALL TO service_role USING (true) WITH CHECK (true);
-CREATE POLICY "SR all on pricing_rules" ON public.pricing_rules FOR ALL TO service_role USING (true) WITH CHECK (true);
-CREATE POLICY "SR all on ads" ON public.ads FOR ALL TO service_role USING (true) WITH CHECK (true);
-CREATE POLICY "SR all on competitor_rankings" ON public.competitor_rankings FOR ALL TO service_role USING (true) WITH CHECK (true);
-CREATE POLICY "SR all on activity_logs" ON public.activity_logs FOR ALL TO service_role USING (true) WITH CHECK (true);
-CREATE POLICY "SR all on bot_state" ON public.bot_state FOR ALL TO service_role USING (true) WITH CHECK (true);
-CREATE POLICY "SR all on bot_settings" ON public.bot_settings FOR ALL TO service_role USING (true) WITH CHECK (true);
-
 -- ============================================================
 -- UPDATED_AT TRIGGER FUNCTION
 -- ============================================================
@@ -434,16 +323,11 @@ BEGIN INSERT INTO public.profiles (id) VALUES (NEW.id) ON CONFLICT (id) DO NOTHI
 -- ============================================================
 -- GRANT PERMISSIONS
 -- ============================================================
-GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
-GRANT ALL ON public.users TO anon, authenticated, service_role;
-GRANT ALL ON public.profiles TO anon, authenticated, service_role;
-GRANT ALL ON public.bot_settings TO anon, authenticated, service_role;
-GRANT ALL ON public.bot_state TO anon, authenticated, service_role;
-GRANT ALL ON public.api_credentials TO anon, authenticated, service_role;
-GRANT ALL ON public.pricing_rules TO anon, authenticated, service_role;
-GRANT ALL ON public.ads TO anon, authenticated, service_role;
-GRANT ALL ON public.competitor_rankings TO anon, authenticated, service_role;
-GRANT ALL ON public.activity_logs TO anon, authenticated, service_role;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+REVOKE ALL ON public.users, public.profiles, public.bot_settings, public.bot_state,
+    public.api_credentials, public.pricing_rules, public.ads, public.competitor_rankings,
+    public.activity_logs FROM anon, authenticated;
+GRANT USAGE ON SCHEMA public TO service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role;
 
 SELECT 'Setup complete!' as status;

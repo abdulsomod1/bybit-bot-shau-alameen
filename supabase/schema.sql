@@ -49,6 +49,41 @@ create table if not exists public.bot_settings (
   constraint one_setting_per_user unique (user_id)
 );
 create index idx_bot_settings_user_id on public.bot_settings(user_id);
+
+create table if not exists public.bot_state (
+  user_id uuid primary key references public.users(id) on delete cascade,
+  status text not null default 'stopped',
+  message text,
+  last_update timestamptz,
+  last_successful_update timestamptz,
+  current_ip text,
+  last_working_ip text,
+  error_count integer not null default 0,
+  update_count integer not null default 0,
+  ip_whitelist_enabled boolean not null default false,
+  ip_whitelist text[] not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.api_credentials (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null unique references public.users(id) on delete cascade,
+  api_key text not null,
+  api_key_masked text,
+  api_secret_encrypted text,
+  api_secret_iv text,
+  has_credentials boolean not null default false,
+  registered_ip text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.users enable row level security;
+alter table public.profiles enable row level security;
+alter table public.bot_settings enable row level security;
+alter table public.bot_state enable row level security;
+alter table public.api_credentials enable row level security;
 -- PRICING RULES
 create table if not exists public.pricing_rules (
   id uuid primary key default uuid_generate_v4(),
@@ -81,7 +116,6 @@ create table if not exists public.pricing_rules (
 create index idx_pricing_rules_user_id on public.pricing_rules(user_id);
 create index idx_pricing_rules_enabled on public.pricing_rules(user_id, enabled);
 alter table public.pricing_rules enable row level security;
-create policy "Pricing rules access" on public.pricing_rules for all using (true);
 
 -- ADS (cached Bybit advertisement data)
 create table if not exists public.ads (
@@ -106,7 +140,6 @@ create table if not exists public.ads (
 create index idx_ads_user_id on public.ads(user_id);
 create index idx_ads_selected on public.ads(user_id, is_selected);
 alter table public.ads enable row level security;
-create policy "Ads access" on public.ads for all using (true);
 
 -- COMPETITOR RANKINGS (market data snapshots)
 create table if not exists public.competitor_rankings (
@@ -130,7 +163,6 @@ create table if not exists public.competitor_rankings (
 create index idx_rankings_user_id on public.competitor_rankings(user_id);
 create index idx_rankings_market_key on public.competitor_rankings(user_id, market_key);
 alter table public.competitor_rankings enable row level security;
-create policy "Users access own rankings" on public.competitor_rankings for all using (auth.uid() = user_id);
 
 -- ACTIVITY LOGS (bot event history)
 create table if not exists public.activity_logs (
@@ -154,18 +186,54 @@ begin new.updated_at = now(); return new; end;
 $$ language plpgsql;
 
 -- Apply trigger to all tables that have updated_at
+drop trigger if exists bot_settings_updated_at on public.bot_settings;
 create trigger bot_settings_updated_at before update on public.bot_settings for each row execute function public.handle_updated_at();
+drop trigger if exists api_credentials_updated_at on public.api_credentials;
 create trigger api_credentials_updated_at before update on public.api_credentials for each row execute function public.handle_updated_at();
+drop trigger if exists pricing_rules_updated_at on public.pricing_rules;
 create trigger pricing_rules_updated_at before update on public.pricing_rules for each row execute function public.handle_updated_at();
+drop trigger if exists ads_updated_at on public.ads;
 create trigger ads_updated_at before update on public.ads for each row execute function public.handle_updated_at();
+drop trigger if exists competitor_rankings_updated_at on public.competitor_rankings;
 create trigger competitor_rankings_updated_at before update on public.competitor_rankings for each row execute function public.handle_updated_at();
+drop trigger if exists bot_state_updated_at on public.bot_state;
 create trigger bot_state_updated_at before update on public.bot_state for each row execute function public.handle_updated_at();
+drop trigger if exists profiles_updated_at on public.profiles;
 create trigger profiles_updated_at before update on public.profiles for each row execute function public.handle_updated_at();
 
+-- Keep all application data behind the server's service-role client.
+drop policy if exists "Pricing rules access" on public.pricing_rules;
+drop policy if exists "Ads access" on public.ads;
+drop policy if exists "Users access own rankings" on public.competitor_rankings;
+drop policy if exists "Public access" on public.pricing_rules;
+drop policy if exists "Public access" on public.ads;
+drop policy if exists "Public access" on public.competitor_rankings;
+drop policy if exists "Public access" on public.activity_logs;
+drop policy if exists "Public access" on public.bot_state;
+drop policy if exists "Public access" on public.bot_settings;
+drop policy if exists "Public access" on public.api_credentials;
+drop policy if exists "Public access" on public.profiles;
+revoke all on table public.users, public.profiles, public.bot_settings, public.bot_state,
+  public.api_credentials, public.pricing_rules, public.ads, public.competitor_rankings,
+  public.activity_logs from anon, authenticated;
+grant all on table public.users, public.profiles, public.bot_settings, public.bot_state,
+  public.api_credentials, public.pricing_rules, public.ads, public.competitor_rankings,
+  public.activity_logs to service_role;
+
+-- Bootstrap the fixed owner rows without a Supabase Auth trigger.
+insert into public.profiles (id, display_name)
+values ('00000000-0000-4000-8000-000000000001', 'Bot Owner')
+on conflict (id) do nothing;
+insert into public.bot_settings (user_id)
+values ('00000000-0000-4000-8000-000000000001')
+on conflict (user_id) do nothing;
+insert into public.bot_state (user_id, status)
+values ('00000000-0000-4000-8000-000000000001', 'stopped')
+on conflict (user_id) do nothing;
+
 -- ============================================================
--- AUTO-CREATE PROFILE + DEFAULT ROWS ON USER SIGNUP
+-- Update legacy foreign keys to the custom users table.
 -- ============================================================
--- competitor_rankings FK is still auth.users — fix it
 alter table public.competitor_rankings drop constraint if exists competitor_rankings_user_id_fkey;
 alter table public.competitor_rankings add constraint competitor_rankings_user_id_fkey foreign key (user_id) references public.users(id) on delete cascade;
 
@@ -181,8 +249,37 @@ alter table public.bot_state add constraint bot_state_user_id_fkey foreign key (
 alter table public.api_credentials drop constraint if exists api_credentials_user_id_fkey;
 alter table public.api_credentials add constraint api_credentials_user_id_fkey foreign key (user_id) references public.users(id) on delete cascade;
 
--- Replace ALL auth.uid() based RLS policies with permissive policies (service role bypasses RLS anyway)
--- Remove broken policies that reference auth.users / auth.uid()
+-- Remove legacy policies; access is exclusively through the backend service role.
+drop policy if exists "Users can view own" on public.users;
+drop policy if exists "Users can update own" on public.users;
+drop policy if exists "Users can view own profile" on public.profiles;
+drop policy if exists "Users can update own profile" on public.profiles;
+drop policy if exists "Users can insert own profile" on public.profiles;
+drop policy if exists "Users can view settings" on public.bot_settings;
+drop policy if exists "Users can insert settings" on public.bot_settings;
+drop policy if exists "Users can update settings" on public.bot_settings;
+drop policy if exists "Users can view bot state" on public.bot_state;
+drop policy if exists "Users can insert bot state" on public.bot_state;
+drop policy if exists "Users can update bot state" on public.bot_state;
+drop policy if exists "Users can view credentials" on public.api_credentials;
+drop policy if exists "Users can insert credentials" on public.api_credentials;
+drop policy if exists "Users can update credentials" on public.api_credentials;
+drop policy if exists "Users can delete credentials" on public.api_credentials;
+drop policy if exists "Users can view rules" on public.pricing_rules;
+drop policy if exists "Users can insert rules" on public.pricing_rules;
+drop policy if exists "Users can update rules" on public.pricing_rules;
+drop policy if exists "Users can delete rules" on public.pricing_rules;
+drop policy if exists "Users can view ads" on public.ads;
+drop policy if exists "Users can insert ads" on public.ads;
+drop policy if exists "Users can update ads" on public.ads;
+drop policy if exists "Users can delete ads" on public.ads;
+drop policy if exists "Users can view rankings" on public.competitor_rankings;
+drop policy if exists "Users can insert rankings" on public.competitor_rankings;
+drop policy if exists "Users can update rankings" on public.competitor_rankings;
+drop policy if exists "Users can delete rankings" on public.competitor_rankings;
+drop policy if exists "Users can view logs" on public.activity_logs;
+drop policy if exists "Users can insert logs" on public.activity_logs;
+drop policy if exists "Users can delete logs" on public.activity_logs;
 drop policy if exists "Users manage own pricing rules" on public.pricing_rules;
 drop policy if exists "Pricing rules access" on public.pricing_rules;
 drop policy if exists "Users access own ads" on public.ads;
@@ -195,41 +292,6 @@ drop policy if exists "Users manage own bot state" on public.bot_state;
 drop policy if exists "Users manage own bot settings" on public.bot_settings;
 drop policy if exists "Users access own credentials" on public.api_credentials;
 drop policy if exists "Profiles access" on public.profiles;
-
--- Create permissive RLS policies (service role bypasses RLS, but anon key needs something)
-create policy "Public access" on public.pricing_rules for all using (true);
-create policy "Public access" on public.ads for all using (true);
-create policy "Public access" on public.competitor_rankings for all using (true);
-create policy "Public access" on public.activity_logs for all using (true);
-create policy "Public access" on public.bot_state for all using (true);
-create policy "Public access" on public.bot_settings for all using (true);
-create policy "Public access" on public.api_credentials for all using (true);
-create policy "Public access" on public.profiles for all using (true);
-
--- Replace the auth.users trigger with a public.users trigger
-drop trigger if exists on_auth_user_created on auth.users;
-drop function if exists public.handle_new_user;
-
-create or replace function public.handle_new_user()
-returns trigger as $$
-begin
-  insert into public.users (id, email, name) values (new.id, new.email, new.raw_user_meta_data->>'name');
-  insert into public.profiles (id, display_name) values (new.id, coalesce(new.raw_user_meta_data->>'display_name', split_part(new.email, '@', 1)));
-  insert into public.bot_settings (user_id) values (new.id);
-  insert into public.bot_state (user_id) values (new.id);
-  return new;
-end;
-$$ language plpgsql security definer;
-
-create trigger on_public_user_created
-  after insert on public.users
-  for each row execute function public.handle_new_user();
-
--- ============================================================
--- GRANT PERMISSIONS
--- ============================================================
-grant usage on schema public to authenticated;
-grant select, insert, update, delete on all tables in schema public to authenticated;
 
 -- ============================================================
 -- SECURITY NOTES
@@ -244,12 +306,15 @@ grant select, insert, update, delete on all tables in schema public to authentic
 --    No GUEST_USER_ID env var — the owner UUID is hardcoded in server code.
 -- ============================================================
 
--- UNIQUE indexes — needed for upserts to work with ON CONFLICT
-CREATE UNIQUE INDEX IF NOT EXISTS idx_api_credentials_user_id ON public.api_credentials(user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_pricing_rules_user_id ON public.pricing_rules(user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_ads_user_id ON public.ads(user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_competitor_rankings_user_id ON public.competitor_rankings(user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_activity_logs_user_id ON public.activity_logs(user_id);
+-- Non-unique owner indexes support multiple rules, ads, rankings, and logs.
+DROP INDEX IF EXISTS public.idx_pricing_rules_user_id;
+DROP INDEX IF EXISTS public.idx_ads_user_id;
+DROP INDEX IF EXISTS public.idx_competitor_rankings_user_id;
+DROP INDEX IF EXISTS public.idx_activity_logs_user_id;
+CREATE INDEX IF NOT EXISTS idx_pricing_rules_user_id ON public.pricing_rules(user_id);
+CREATE INDEX IF NOT EXISTS idx_ads_user_id ON public.ads(user_id);
+CREATE INDEX IF NOT EXISTS idx_competitor_rankings_user_id ON public.competitor_rankings(user_id);
+CREATE INDEX IF NOT EXISTS idx_activity_logs_user_id ON public.activity_logs(user_id);
 
 -- ============================================================
 -- SECURE CREDENTIAL STORAGE RPC FUNCTION

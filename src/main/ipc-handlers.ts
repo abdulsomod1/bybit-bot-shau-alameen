@@ -4,7 +4,7 @@ import log from 'electron-log';
 import { getCredentials, saveCredentials, deleteCredentials, getAppSettings, saveAppSettings, getAds, updateAdSelected, getRules, saveRule, deleteRule, getRankings, getLogs, clearLogs, getBotState, updateBotState as dbUpdateBotState } from './services/database';
 import { testBybitConnection } from './services/bybit-api';
 import { getCurrentPublicIP } from './services/ip-monitor';
-import { startBotWorker, pauseBotWorker, resumeBotWorker, stopBotWorker } from './services/bot-worker';
+import { stopBotWorker } from './services/bot-worker';
 
 function saveBotState(state: Record<string, any>): void {
   try { dbUpdateBotState(state); } catch (e) { log.error('saveBotState error:', e); }
@@ -13,23 +13,15 @@ function saveBotState(state: Record<string, any>): void {
 export function registerIpcHandlers(): void {
   // Bot controls
   ipcMain.handle('start-bot', async () => {
-    try {
-      const creds = getCredentials();
-      if (!creds) return { success: false, error: 'No credentials saved' };
-      startBotWorker();
-      saveBotState({ status: 'running' });
-      return { success: true };
-    } catch (err: any) { log.error('start-bot error:', err); return { success: false, error: err.message }; }
+    return { success: false, error: 'The legacy local trading worker is disabled. Start the server-backed bot from the dashboard.' };
   });
 
   ipcMain.handle('pause-bot', async () => {
-    try { pauseBotWorker(); saveBotState({ status: 'paused' }); return { success: true }; }
-    catch (err: any) { log.error('pause-bot error:', err); return { success: false, error: err.message }; }
+    return { success: false, error: 'Pause the server-backed bot from the dashboard.' };
   });
 
   ipcMain.handle('resume-bot', async () => {
-    try { resumeBotWorker(); saveBotState({ status: 'running' }); return { success: true }; }
-    catch (err: any) { log.error('resume-bot error:', err); return { success: false, error: err.message }; }
+    return { success: false, error: 'Resume the server-backed bot from the dashboard.' };
   });
 
   ipcMain.handle('stop-bot', async () => {
@@ -117,8 +109,7 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('approve-pending-update', async (_event, _adId: string) => {
-    try { return { success: true }; }
-    catch (err: any) { log.error('approve-pending-update error:', err); return { success: false, error: err.message }; }
+    return { success: false, error: 'Approve pending price changes from the server-backed dashboard.' };
   });
 
   // Rules
@@ -144,14 +135,7 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('refresh-rankings', async () => {
-    try {
-      const creds = getCredentials();
-      if (!creds) return { success: false, error: 'No credentials saved' };
-      const { refreshBotRankings } = require('./services/bot-worker');
-      await refreshBotRankings(creds.apiKey, creds.apiSecret);
-      BrowserWindow.getAllWindows().forEach(win => { if (!win.isDestroyed()) win.webContents.send('rankings-updated', getRankings()); });
-      return { success: true };
-    } catch (err: any) { log.error('refresh-rankings error:', err); return { success: false, error: err.message }; }
+    return { success: false, error: 'Refresh rankings from the server-backed dashboard.' };
   });
 
   // Logs

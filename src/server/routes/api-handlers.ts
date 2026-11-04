@@ -16,7 +16,9 @@ import {
   getLogs, clearLogs,
   getBotState, updateBotState,
 } from '../services/db-helpers.js';
-import { getBybitAds, testBybitConnection } from '../services/bybit-api.js';
+import { fetchMarketAds, getBybitAds, testBybitConnection, updateAdPrice } from '../services/bybit-api.js';
+import { computeRankings, computeTargetPrice, parsePrice } from '../services/bot-algorithms.js';
+import { claimPendingUpdate, getPendingUpdate, getPendingUpdates, releasePendingUpdate, removePendingUpdate } from '../services/pending-updates.js';
 
 function ok(res: any, data: any) { res.json(data); }
 
@@ -214,7 +216,15 @@ export async function handleFetchAds(req: AuthenticatedRequest, res: any) {
       return res.status(400).json({ error: 'Save Bybit API credentials before fetching ads' });
     }
     const ads = await getBybitAds(credentials);
-    await saveAds(req.supabase, req.userId, ads);
+    const selectedIds = new Set(
+      (await getAds(req.supabase, req.userId))
+        .filter((ad: any) => ad.is_selected)
+        .map((ad: any) => String(ad.ad_id ?? ad.id)),
+    );
+    await saveAds(req.supabase, req.userId, ads.map((ad: any) => {
+      const { updatePayload: _updatePayload, ...record } = ad;
+      return { ...record, is_selected: selectedIds.has(String(ad.id)) };
+    }));
     ok(res, { success: true, count: ads.length });
   } catch (e) { err(res, e, 'Failed to fetch ads'); }
 }
@@ -287,8 +297,124 @@ export async function handleGetBotState(req: AuthenticatedRequest, res: any) {
 }
 
 export async function handleUpdateBotState(req: AuthenticatedRequest, res: any) {
-  try { ok(res, await updateBotState(req.supabase, req.userId, req.body)); }
+  try {
+    const state = await updateBotState(req.supabase, req.userId, req.body);
+    if (req.body?.status === 'running') {
+      const { wakeBotWorker } = await import('../services/bot-worker.js');
+      wakeBotWorker();
+    }
+    ok(res, state);
+  }
   catch (e) { err(res, e); }
+}
+
+export async function handleGetPendingUpdates(req: AuthenticatedRequest, res: any) {
+  ok(res, getPendingUpdates(req.userId));
+}
+
+export async function handleRejectPendingUpdate(req: AuthenticatedRequest, res: any) {
+  const removed = removePendingUpdate(req.userId, String(req.params.id));
+  if (!removed) return res.status(404).json({ error: 'Pending update not found or expired' });
+  ok(res, { success: true });
+}
+
+export async function handleApprovePendingUpdate(req: AuthenticatedRequest, res: any) {
+  const pending = getPendingUpdate(req.userId, String(req.params.id));
+  if (!pending) return res.status(404).json({ error: 'Pending update not found or expired' });
+  if (!claimPendingUpdate(req.userId, pending.id)) {
+    return res.status(409).json({ error: 'This pending update is already being processed' });
+  }
+
+  try {
+    const state = await getBotState(req.supabase, req.userId);
+    if (state?.status !== 'running') return res.status(409).json({ error: 'Start the bot before approving a price update' });
+
+    const rules = await getRules(req.supabase, req.userId);
+    const rule = rules.find((item: any) => item.id === pending.ruleId);
+    if (!rule?.enabled || !rule.manual_approval || rule.dry_run) {
+      removePendingUpdate(req.userId, pending.id);
+      return res.status(409).json({ error: 'The rule changed; refresh the pending updates before approving' });
+    }
+
+    const credentials = await getCredentialsForBot(req.userId);
+    if (!credentials) return res.status(400).json({ error: 'Save Bybit API credentials before approving an update' });
+
+    const [cachedAds, ownAds] = await Promise.all([
+      getAds(req.supabase, req.userId),
+      getBybitAds(credentials),
+    ]);
+    const cachedAd = cachedAds.find((ad: any) => String(ad.ad_id ?? ad.id) === pending.adId && ad.is_selected);
+    const myAd = ownAds.find((ad: any) => ad.id === pending.adId);
+    const expectedDirection = String(rule.direction).toUpperCase();
+    const isRuleMatch = myAd &&
+      myAd.direction === expectedDirection &&
+      String(myAd.asset).toUpperCase() === String(rule.asset ?? 'USDT').toUpperCase() &&
+      String(myAd.fiat_currency).toUpperCase() === String(rule.fiat_currency ?? 'USD').toUpperCase();
+    if (!cachedAd || !isRuleMatch || myAd.status !== 'online') {
+      removePendingUpdate(req.userId, pending.id);
+      return res.status(409).json({ error: 'The ad is no longer selected or online' });
+    }
+
+    const currentPrice = parsePrice(String(myAd.price));
+    if (Math.abs(currentPrice - pending.currentPrice) > 1e-8) {
+      removePendingUpdate(req.userId, pending.id);
+      return res.status(409).json({ error: 'The ad price changed; refresh rankings and review the new target' });
+    }
+
+    const direction = String(rule.direction).toUpperCase() as 'BUY' | 'SELL';
+    const marketAds = await fetchMarketAds({
+      side: direction === 'BUY' ? 'Buy' : 'Sell',
+      asset: String(rule.asset ?? 'USDT'),
+      fiatCurrency: String(rule.fiat_currency ?? 'USD'),
+      paymentMethodIds: rule.payment_method_ids,
+    }, credentials.apiKey, credentials.apiSecret);
+    const ownedIds = new Set(ownAds.map((ad: any) => ad.id));
+    const ranking = computeRankings(marketAds.filter((ad: any) => !ownedIds.has(String(ad.id))), direction);
+    const freshTarget = computeTargetPrice(currentPrice, ranking, rule);
+    if (!freshTarget || Math.abs(Number(freshTarget) - Number(pending.targetPrice)) > 1e-8) {
+      removePendingUpdate(req.userId, pending.id);
+      return res.status(409).json({ error: 'The market target changed; refresh rankings and review the new target' });
+    }
+
+    const lastUpdate = Date.parse(String(myAd.last_update_time ?? ''));
+    if (Number.isFinite(lastUpdate) && Number(rule.min_interval_ms) > 0 && Date.now() - lastUpdate < Number(rule.min_interval_ms)) {
+      return res.status(409).json({ error: 'The minimum update interval has not elapsed' });
+    }
+    const hourCount = await countUpdatesForWorker(req.userId, pending.adId, Date.now() - 60 * 60 * 1000);
+    const dayCount = await countUpdatesForWorker(req.userId, pending.adId, Date.now() - 24 * 60 * 60 * 1000);
+    if (Number(rule.max_updates_per_hour) > 0 && hourCount >= Number(rule.max_updates_per_hour)) {
+      return res.status(409).json({ error: 'The hourly update limit has been reached' });
+    }
+    if (Number(rule.max_updates_per_day) > 0 && dayCount >= Number(rule.max_updates_per_day)) {
+      return res.status(409).json({ error: 'The daily update limit has been reached' });
+    }
+
+    const latestState = await getBotState(req.supabase, req.userId);
+    if (latestState?.status !== 'running') {
+      return res.status(409).json({ error: 'The bot was stopped or paused before approval completed' });
+    }
+
+    const result = await updateAdPrice(myAd, freshTarget, credentials.apiKey, credentials.apiSecret);
+    if (!result.success) return res.status(502).json({ error: result.error || 'Bybit rejected the price update' });
+
+    await updateAdForWorker(req.userId, pending.adId, freshTarget);
+    await addLogForWorker(req.userId, {
+      level: 'success', category: 'pricing',
+      message: `Approved and updated ad ${pending.adId}: ${currentPrice} -> ${freshTarget}`,
+      ad_id: pending.adId, previous_value: String(currentPrice), new_value: freshTarget,
+    });
+    await updateBotState(req.supabase, req.userId, {
+      last_successful_update: new Date().toISOString(),
+      update_count: Number(state.update_count ?? 0) + 1,
+      error_count: 0,
+    });
+    removePendingUpdate(req.userId, pending.id);
+    return ok(res, { success: true, adId: pending.adId, price: freshTarget });
+  } catch (e) {
+    err(res, e, 'Failed to approve the pending update');
+  } finally {
+    releasePendingUpdate(pending.id);
+  }
 }
 
 // ── Bot worker helpers (use service role — no user context) ─────────────────────
@@ -305,7 +431,17 @@ export async function getRulesForWorker(userId: string) {
 export async function getBotStateForWorker(userId: string) {
   const { data, error } = await supabaseAdmin
     .from('bot_state')
-    .select('status')
+    .select('status, update_count')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function getSettingsForWorker(userId: string) {
+  const { data, error } = await supabaseAdmin
+    .from('bot_settings')
+    .select('polling_interval_ms')
     .eq('user_id', userId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -318,6 +454,19 @@ export async function getAdsForWorker(userId: string) {
     .from('ads').select('*').eq('user_id', userId);
   if (error) throw new Error(error.message);
   return data ?? [];
+}
+
+export async function syncAdsForWorker(userId: string, ads: Record<string, unknown>[]) {
+  const existing = await getAdsForWorker(userId);
+  const selectedIds = new Set(
+    existing.filter((ad: any) => ad.is_selected).map((ad: any) => String(ad.ad_id ?? ad.id)),
+  );
+  const rows = ads.map((ad: any) => {
+    const { updatePayload: _updatePayload, ...record } = ad;
+    return { ...record, is_selected: selectedIds.has(String(ad.id)) };
+  });
+  await saveAds(supabaseAdmin, userId, rows);
+  return ads.map((ad: any) => ({ ...ad, is_selected: selectedIds.has(String(ad.id)) }));
 }
 
 /** Wraps saveRanking with supabaseAdmin for the bot worker. */
@@ -333,6 +482,40 @@ export async function addLogForWorker(userId: string, entry: Record<string, unkn
   const { error } = await supabaseAdmin
     .from('activity_logs').insert({ ...entry, user_id: userId });
   if (error) throw new Error(error.message);
+}
+
+/** Updates the cached ad after a successful Bybit price change. */
+export async function updateAdForWorker(userId: string, adId: string, price: string) {
+  const updatedAt = new Date().toISOString();
+  const modern = await supabaseAdmin
+    .from('ads')
+    .update({ price, last_update_time: updatedAt })
+    .eq('id', adId)
+    .eq('user_id', userId)
+    .select('id');
+  if (modern.error && modern.error.code !== '22P02') throw new Error(modern.error.message);
+  if (modern.data?.length) return;
+
+  const legacy = await supabaseAdmin
+    .from('ads')
+    .update({ price, last_update_time: updatedAt })
+    .eq('ad_id', adId)
+    .eq('user_id', userId);
+  if (legacy.error) throw new Error(legacy.error.message);
+}
+
+/** Counts successful price updates for an ad within the requested time window. */
+export async function countUpdatesForWorker(userId: string, adId: string, since: number): Promise<number> {
+  const { count, error } = await supabaseAdmin
+    .from('activity_logs')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('ad_id', adId)
+    .eq('category', 'pricing')
+    .eq('level', 'success')
+    .gte('created_at', new Date(since).toISOString());
+  if (error) throw new Error(error.message);
+  return count ?? 0;
 }
 
 /** Wraps updateBotState with supabaseAdmin for the bot worker. */

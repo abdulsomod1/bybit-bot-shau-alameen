@@ -2,8 +2,8 @@ export function rankCompetitors(ads: any[], direction: 'BUY' | 'SELL'): any[] {
   const filtered = ads.filter(ad => ad.price && !isNaN(parseFloat(ad.price)));
   const sorted = [...filtered].sort((a, b) => {
     const diff = parseFloat(a.price) - parseFloat(b.price);
-    if (direction === 'BUY') return diff; // Highest BUY price = rank 1 (best for seller)
-    return -diff; // Lowest SELL price = rank 1 (best for buyer)
+    if (direction === 'BUY') return -diff;
+    return diff;
   });
   return sorted.map((ad, i) => ({ ...ad, rank: i + 1 }));
 }

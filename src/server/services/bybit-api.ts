@@ -8,7 +8,7 @@ export type ConnectionTestResult = {
 
 export async function testBybitConnection(apiKey: string, apiSecret: string): Promise<ConnectionTestResult> {
   try {
-    await apiReq('GET', '/v5/api-key/info', {}, apiKey, apiSecret);
+    await apiReq('GET', '/v5/user/query-api', {}, apiKey, apiSecret);
     return { success: true, apiKeyPrefix: apiKey.slice(0, 6) };
   } catch (err: any) {
     const detail = err.ipError ? ' IP not whitelisted in Bybit.' : err.authError ? ' Invalid API key or secret.' : '';
@@ -19,20 +19,34 @@ export async function testBybitConnection(apiKey: string, apiSecret: string): Pr
 export async function getBybitAds(params: { apiKey: string; apiSecret: string }): Promise<any[]> {
   const { apiKey, apiSecret } = params;
   const result: any[] = [];
-  for (const side of ['Buy', 'Sell'] as const) {
-    const data = await p2pReq('GET', '/v2/otc/item/list', { side, asset: 'USDT', fiat: 'USD', page: 1, limit: 50 }, apiKey, apiSecret);
-    (data?.list ?? []).forEach((ad: any) => {
-      result.push({
-        id: ad.id, account_id: ad.account_id,
-        direction: String(ad.side).toUpperCase(), asset: ad.asset || 'USDT', fiat_currency: ad.fiat_ccy || ad.fiat_en,
-        price: ad.price, available_quantity: ad.tradable_amount || ad.amount,
-        min_order_amount: ad.min_amount, max_order_amount: ad.max_amount,
-        status: ad.status === 1 ? 'online' : 'offline',
-        last_update_time: ad.update_time ? new Date(ad.update_time * 1000).toISOString() : null,
-        payment_methods: ad.payment_names ? ad.payment_names.split(',') : [],
-        created_time: ad.create_time ? new Date(ad.create_time * 1000).toISOString() : null,
-      });
-    });
+  for (let page = 1; page <= 100; page++) {
+    const data = await p2pReq('POST', '/v5/p2p/item/personal/list', { page: String(page), size: '30' }, apiKey, apiSecret);
+    const items = data?.items ?? [];
+    result.push(...items.map((ad: any) => ({
+      id: String(ad.id), account_id: ad.accountId,
+      direction: Number(ad.side) === 0 ? 'BUY' : 'SELL',
+      asset: ad.tokenId || 'USDT', fiat_currency: ad.currencyId,
+      price: ad.price, available_quantity: ad.lastQuantity || ad.quantity,
+      min_order_amount: ad.minAmount, max_order_amount: ad.maxAmount,
+      status: Number(ad.status) === 10 ? 'online' : 'offline',
+      last_update_time: ad.updateDate ? new Date(Number(ad.updateDate)).toISOString() : null,
+      payment_methods: ad.payments ?? [],
+      created_time: ad.createDate ? new Date(Number(ad.createDate)).toISOString() : null,
+      updatePayload: {
+        id: String(ad.id),
+        priceType: ad.priceType == null ? undefined : String(ad.priceType),
+        premium: ad.premium == null ? undefined : String(ad.premium),
+        minAmount: ad.minAmount == null ? undefined : String(ad.minAmount),
+        maxAmount: ad.maxAmount == null ? undefined : String(ad.maxAmount),
+        quantity: ad.quantity == null && ad.lastQuantity == null ? undefined : String(ad.quantity ?? ad.lastQuantity),
+        paymentIds: ad.payments,
+        paymentPeriod: ad.paymentPeriod == null ? undefined : String(ad.paymentPeriod),
+        remark: ad.remark == null ? undefined : String(ad.remark),
+        tradingPreferenceSet: ad.tradingPreferenceSet,
+        actionType: 'MODIFY',
+      },
+    })));
+    if (items.length < 30 || result.length >= Number(data?.count ?? 0)) break;
   }
   return result;
 }
@@ -41,32 +55,31 @@ export async function fetchMarketAds(
   p: { side: 'Buy' | 'Sell'; asset: string; fiatCurrency: string; minAmount?: string; maxAmount?: string; paymentMethodIds?: string[] },
   apiKey: string, apiSecret: string,
 ): Promise<any[]> {
-  const req: Record<string, any> = { side: p.side, asset: p.asset, fiat: p.fiatCurrency, page: 1, limit: 50 };
-  if (p.minAmount) req.min_amount = p.minAmount;
-  if (p.maxAmount) req.max_amount = p.maxAmount;
-  let ads = (await p2pReq('GET', '/v2/otc/item/list', req, apiKey, apiSecret))?.list ?? [];
-  if (p.paymentMethodIds?.length) {
-    ads = ads.filter((ad: any) => {
-      if (!ad.payment_ids) return false;
-      const ids = String(ad.payment_ids).split(',');
-      return p.paymentMethodIds!.some((id) => ids.includes(id));
-    });
-  }
+  const req: Record<string, any> = {
+    side: p.side === 'Buy' ? '0' : '1', tokenId: p.asset,
+    currencyId: p.fiatCurrency, page: '1', size: '300',
+  };
+  if (p.paymentMethodIds?.length) req.paymentIds = p.paymentMethodIds;
+  const ads = (await p2pReq('POST', '/v5/p2p/item/online', req, apiKey, apiSecret))?.items ?? [];
   return ads.map((ad: any) => ({
-    id: ad.id, userName: ad.user_nickname, nickname: ad.user_nickname || 'Unknown',
-    direction: String(ad.side).toUpperCase(), asset: ad.asset, fiat_currency: ad.fiat_ccy || ad.fiat_en,
-    price: ad.price, available_quantity: ad.tradable_amount || ad.amount,
-    min_order_amount: ad.min_amount, max_order_amount: ad.max_amount,
-    payment_methods: ad.payment_names ? ad.payment_names.split(',') : [],
-    last_update_time: ad.update_time ? new Date(ad.update_time * 1000).toISOString() : null,
-    completion_rate: ad.completed_business_count
-      ? Math.round((ad.completed_business_count / Math.max(ad.total_trade_count || 1, 1)) * 100) : undefined,
+    id: String(ad.id), userName: ad.nickName || String(ad.userId ?? ''), nickname: ad.nickName || 'Unknown',
+    direction: Number(ad.side) === 0 ? 'BUY' : 'SELL', asset: ad.tokenId, fiat_currency: ad.currencyId,
+    price: ad.price, available_quantity: ad.lastQuantity || ad.quantity,
+    min_order_amount: ad.minAmount, max_order_amount: ad.maxAmount,
+    payment_methods: ad.payments ?? [],
+    last_update_time: ad.updateDate ? new Date(Number(ad.updateDate)).toISOString() : null,
+    completion_rate: ad.recentExecuteRate,
   }));
 }
 
-export async function updateAdPrice(adId: string, newPrice: string, apiKey: string, apiSecret: string): Promise<{ success: boolean; error?: string }> {
+export async function updateAdPrice(ad: any, newPrice: string, apiKey: string, apiSecret: string): Promise<{ success: boolean; error?: string }> {
   try {
-    await p2pReq('POST', '/v2/otc/item/update', { id: adId, price: newPrice }, apiKey, apiSecret);
+    const source = ad.updatePayload;
+    const required = ['id', 'priceType', 'premium', 'minAmount', 'maxAmount', 'quantity', 'paymentIds', 'paymentPeriod', 'remark', 'tradingPreferenceSet', 'actionType'];
+    if (!source || String(source.id) !== String(ad.id) || required.some((key) => source[key] == null) || !Array.isArray(source.paymentIds) || source.paymentIds.length === 0 || typeof source.tradingPreferenceSet !== 'object') {
+      return { success: false, error: 'Bybit did not return all required ad fields; refusing to send a partial update.' };
+    }
+    await p2pReq('POST', '/v5/p2p/item/update', { ...source, price: newPrice }, apiKey, apiSecret);
     return { success: true };
   } catch (err: any) {
     if (err.ipError) return { success: false, error: 'Your current IP is not whitelisted in Bybit.' };

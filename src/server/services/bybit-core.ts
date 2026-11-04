@@ -65,23 +65,28 @@ export async function p2pReq(
   method: string, endpoint: string, params: ApiParams, key: string, secret: string,
 ): Promise<any> {
   const timestamp = Date.now().toString();
-  const pStr = qs(normalizeParams(params));
-  const sig = hmac(`${timestamp}${key}${RECV_WINDOW}${pStr}`, secret);
-  const response = await fetchBybit(`${BYBIT_P2P_URL}${endpoint}${pStr ? `?${pStr}` : ''}`, {
+  if (method !== 'POST') throw new Error(`Bybit P2P ${endpoint} requires POST`);
+  const body = JSON.stringify(params);
+  const sig = hmac(`${timestamp}${key}${RECV_WINDOW}${body}`, secret);
+  const response = await fetchBybit(`${BYBIT_API_URL}${endpoint}`, {
     method,
     headers: {
       'X-BAPI-API-KEY': key, 'X-BAPI-SIGN': sig,
       'X-BAPI-SIGN-TYPE': '2', 'X-BAPI-TIMESTAMP': timestamp,
       'X-BAPI-RECV-WINDOW': `${RECV_WINDOW}`, 'Content-Type': 'application/json',
     },
+    body,
   });
   const { data } = await readResponse(response);
-  if (data.ret_code && data.ret_code !== 0) {
-    const e = new Error(data.ret_msg || `Bybit P2P ${data.ret_code}`) as any;
-    e.retCode = data.ret_code;
-    e.ipError = data.ret_code === 10010;
-    e.authError = data.ret_code === 10003;
+  const returnCode = data.retCode ?? data.ret_code;
+  if (returnCode == null) throw new Error('Malformed Bybit P2P response: missing return code.');
+  if (returnCode != null && Number(returnCode) !== 0) {
+    const e = new Error(data.retMsg || data.ret_msg || `Bybit P2P ${returnCode}`) as any;
+    e.retCode = Number(returnCode);
+    e.ret_code = Number(returnCode);
+    e.ipError = Number(returnCode) === 10010;
+    e.authError = Number(returnCode) === 10003;
     throw e;
   }
-  return data;
+  return data.result ?? data;
 }

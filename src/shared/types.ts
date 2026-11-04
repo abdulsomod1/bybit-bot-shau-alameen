@@ -76,7 +76,7 @@ export interface CompetitorRanking {
   refreshError?: string;
 }
 
-export type StrategyType = 'match_1st' | 'match_2nd' | 'match_3rd' | 'under_3rd' | 'fixed' | 'offset_fixed' | 'monitor_only';
+export type StrategyType = 'match_1st' | 'match_2nd' | 'match_3rd' | 'under_1st' | 'under_2nd' | 'under_3rd' | 'fixed' | 'fixed_offset' | 'offset_fixed' | 'offset_third' | 'monitor_only';
 
 export interface PricingRule {
   id: string;

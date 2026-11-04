@@ -123,3 +123,9 @@ export const apiBotState = {
   get: () => request<any>('GET', '/bot-state'),
   update: (state: Record<string, unknown>) => request<any>('POST', '/bot-state', state),
 };
+
+export const apiPendingUpdates = {
+  get: () => request<any[]>('GET', '/pending-updates'),
+  approve: (id: string) => request<any>('POST', `/pending-updates/${id}/approve`),
+  reject: (id: string) => request<any>('DELETE', `/pending-updates/${id}`),
+};

@@ -1,9 +1,11 @@
 // Diagnostic script to verify the bot's build state
-const fs = require('fs');
-const path = require('path');
-const { execSync } = require('child_process');
+import 'dotenv/config';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = 'c:\\bot';
+const root = path.dirname(fileURLToPath(import.meta.url));
 const results = [];
 
 function check(name, condition, details) {
@@ -30,10 +32,15 @@ check('node_modules', nmExists, nmExists ? 'exists' : 'MISSING - run npm install
 const pkgExists = fs.existsSync(path.join(root, 'package.json'));
 check('package.json', pkgExists);
 
-// Check dist/main/main/main.js
-const mainJsExists = fs.existsSync(path.join(root, 'dist\\main\\main\\main.js'));
+// Check compiled application entry points
+const mainJsExists = fs.existsSync(path.join(root, 'dist', 'main', 'main', 'main.js'));
 check('dist/main/main/main.js (compiled)', mainJsExists, mainJsExists ? 'exists' : 'MISSING - run build:main');
-check('dist/main/preload.js (compiled)', fs.existsSync(path.join(root, 'dist\\main\\preload.js')), fs.existsSync(path.join(root, 'dist\\main\\preload.js')) ? 'exists' : 'MISSING - run build:preload');
+const preloadExists = fs.existsSync(path.join(root, 'dist', 'main', 'preload.js'));
+check('dist/main/preload.js (compiled)', preloadExists, preloadExists ? 'exists' : 'MISSING - run build:preload');
+const rendererExists = fs.existsSync(path.join(root, 'dist', 'renderer', 'index.html'));
+check('dist/renderer/index.html (compiled)', rendererExists, rendererExists ? 'exists' : 'MISSING - run build:renderer');
+const serverExists = fs.existsSync(path.join(root, 'dist', 'server', 'index.js'));
+check('dist/server/index.js (compiled)', serverExists, serverExists ? 'exists' : 'MISSING - run build:server');
 
 // Check ipc-handlers.ts
 const ipcExists = fs.existsSync(path.join(root, 'src\\main\\ipc-handlers.ts'));
@@ -56,10 +63,16 @@ for (const f of keyFiles) {
 // Try TypeScript check
 console.log('\n--- TypeScript Check ---');
 try {
-  execSync('cd /d c:\\bot && npx tsc -p tsconfig.main.json --noEmit', { 
+  execFileSync(process.execPath, [
+    path.join(root, 'node_modules', 'typescript', 'bin', 'tsc'),
+    '-p',
+    'tsconfig.main.json',
+    '--noEmit',
+  ], {
+    cwd: root,
     stdio: 'inherit', 
     timeout: 60000,
-    windowsHide: true 
+    windowsHide: true,
   });
   check('TypeScript check', true);
 } catch(e) {

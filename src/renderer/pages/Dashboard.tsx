@@ -1,8 +1,14 @@
 import { useApi } from '../hooks/useApi';
+import { useEffect, useState } from 'react';
 
 export default function Dashboard() {
-  const { status, ads, rankings, rules, botState, startBot, pauseBot, resumeBot, stopBot, refreshRankings } = useApi();
+  const { status, ads, rankings, rules, botState, pendingUpdates, startBot, pauseBot, resumeBot, stopBot, refreshRankings, approvePendingUpdate, rejectPendingUpdate, refreshPendingUpdates } = useApi();
+  const [pendingError, setPendingError] = useState('');
   const isRunning = status?.status === 'running', isPaused = status?.status === 'paused';
+  useEffect(() => {
+    const timer = window.setInterval(() => { void refreshPendingUpdates().catch(() => {}); }, 15000);
+    return () => window.clearInterval(timer);
+  }, [refreshPendingUpdates]);
   const selAds = ads.filter((a: any) => a.isSelected);
   const enRules = rules.filter((r: any) => r.enabled);
   const fmt = (iso: string) => iso ? new Date(iso).toLocaleTimeString() : '—';
@@ -31,6 +37,26 @@ export default function Dashboard() {
           <span>Success: <span style={{ color: 'var(--success)' }}>{fmt(status.lastSuccessfulUpdate)}</span></span>
           {status?.currentIP && <span>IP: <span className="font-mono" style={{ color: 'var(--accent)' }}>{status.currentIP}</span></span>}
         </div>)}
+      {pendingUpdates.length > 0 && <section className="card">
+        <h3 className="text-lg font-semibold mb-3">Price Approvals</h3>
+        {pendingError && <p role="alert" className="text-sm mb-3" style={{ color: 'var(--danger)' }}>{pendingError}</p>}
+        <div className="space-y-2">
+          {pendingUpdates.map((pending: any) => (
+            <div key={pending.id} className="flex items-center justify-between gap-4 p-3 rounded" style={{ background: 'var(--bg-tertiary)' }}>
+              <div className="min-w-0">
+                <div className="font-medium text-sm">{pending.ruleName} · Ad {pending.adId}</div>
+                <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                  {pending.currentPrice} → {pending.targetPrice} · expires {new Date(new Date(pending.createdAt).getTime() + 10 * 60 * 1000).toLocaleTimeString()}
+                </div>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                <button className="btn btn-success text-xs" onClick={async () => { setPendingError(''); try { await approvePendingUpdate(pending.id); } catch (error) { setPendingError(error instanceof Error ? error.message : 'Approval failed'); } }}>Approve</button>
+                <button className="btn btn-ghost text-xs" onClick={async () => { setPendingError(''); try { await rejectPendingUpdate(pending.id); } catch (error) { setPendingError(error instanceof Error ? error.message : 'Rejection failed'); } }}>Reject</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>}
       <div className="card">
         <h3 className="text-lg font-semibold mb-4">Market Rankings</h3>
         {rankings.length === 0 ? <div className="text-center py-8" style={{ color: 'var(--text-secondary)' }}>No rankings. Start the bot.</div> :

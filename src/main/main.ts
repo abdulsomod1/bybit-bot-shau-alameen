@@ -17,10 +17,7 @@ import {
   startDatabase,
   getAppSettings,
 } from './services/database';
-import {
-  startBotWorker,
-  stopBotWorker,
-} from './services/bot-worker';
+import { stopBotWorker } from './services/bot-worker';
 
 log.transports.file.level = 'info';
 log.transports.console.level = 'debug';
@@ -237,15 +234,12 @@ app.whenReady().then(async () => {
     log.error('IPC registration failed:', error);
   }
 
-  // Load settings and start the bot worker.
+  // Load settings without starting live trading implicitly.
   try {
     await getAppSettings();
     log.info('Application settings loaded');
-
-    await startBotWorker();
-    log.info('Bot worker started');
   } catch (error) {
-    log.error('Bot worker or settings startup failed:', error);
+    log.error('Settings startup failed:', error);
   }
 
   createTray();
