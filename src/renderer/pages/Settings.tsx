@@ -20,7 +20,9 @@ export default function Settings() {
   } = useApi();
 
   // ── Owner Access Token ──────────────────────────────────────────────────────
-  const [ownerToken, setOwnerTokenLocal] = useState(getOwnerToken());
+  const [ownerToken, setOwnerTokenLocal] = useState('');
+  const [hasSavedToken, setHasSavedToken] = useState(() => Boolean(getOwnerToken()));
+  const [editingToken, setEditingToken] = useState(() => !getOwnerToken());
   const [tokenSaved, setTokenSaved] = useState(false);
   const [tokenError, setTokenError] = useState('');
 
@@ -31,15 +33,18 @@ export default function Settings() {
       return;
     }
     setOwnerToken(ownerToken.trim());
+    setHasSavedToken(true);
+    setEditingToken(false);
     setTokenSaved(true);
     void fetchAll();
     setTimeout(() => setTokenSaved(false), 3000);
   };
 
-  const clearToken = () => {
-    setOwnerToken('');
+  const changeToken = () => {
     setOwnerTokenLocal('');
-    window.location.reload();
+    setTokenError('');
+    setTokenSaved(false);
+    setEditingToken(true);
   };
 
   // ── API Key / Secret ────────────────────────────────────────────────────────
@@ -222,14 +227,13 @@ export default function Settings() {
   return (
     <div className="space-y-6 max-w-2xl">
       {/* ── Owner Access Token Setup ───────────────────────────────────────── */}
-      {!ownerToken && (
+      {editingToken && (
         <div className="card border-l-4" style={{ borderColor: 'var(--warning)' }}>
           <h3 className="font-semibold mb-2 flex items-center gap-2">
-            🔐 Owner Access Token Required
+            🔐 {hasSavedToken ? 'Change Owner Access Token' : 'Owner Access Token Required'}
           </h3>
           <p className="text-sm mb-3" style={{ color: 'var(--text-secondary)' }}>
-            To access the dashboard, set your Owner Access Token. This protects the API from unauthorized access.
-            Set it in your Render dashboard environment variables (<code>OWNER_ACCESS_TOKEN</code>), then enter it below.
+            Enter the same token configured in your Render service’s <code>OWNER_ACCESS_TOKEN</code> environment variable.
           </p>
           <div className="flex gap-2">
             <input
@@ -240,20 +244,26 @@ export default function Settings() {
               onChange={(e) => { setOwnerTokenLocal(e.target.value); setTokenError(''); }}
               onKeyDown={(e) => e.key === 'Enter' && saveToken()}
             />
-            <button onClick={saveToken} className="btn btn-primary">Save Token</button>
+            <button type="button" onClick={saveToken} className="btn btn-primary">Save Token</button>
+            {hasSavedToken && (
+              <button type="button" onClick={() => setEditingToken(false)} className="btn btn-ghost">
+                Cancel
+              </button>
+            )}
           </div>
           {tokenError && <p className="text-xs mt-1" style={{ color: 'var(--error)' }}>{tokenError}</p>}
-          {tokenSaved && <p className="text-xs mt-1" style={{ color: 'var(--success)' }}>Token saved. Checking access…</p>}
         </div>
       )}
 
       {/* ── Change Token (when one is already set) ─────────────────────────── */}
-      {ownerToken && (
+      {!editingToken && hasSavedToken && (
         <div className="card">
           <h3 className="font-semibold mb-2">🔐 Owner Access Token</h3>
           <div className="flex gap-2 items-center">
-            <span className="text-sm" style={{ color: 'var(--success)' }}>✓ Token saved in this browser (server access is checked separately)</span>
-            <button onClick={clearToken} className="btn btn-ghost text-xs ml-auto">Change Token</button>
+            <span className="text-sm" style={{ color: 'var(--success)' }}>
+              ✓ {tokenSaved ? 'Token saved in this browser. Checking server access…' : 'Token saved in this browser (server access is checked separately).'}
+            </span>
+            <button type="button" onClick={changeToken} className="btn btn-ghost text-xs ml-auto">Change Token</button>
           </div>
         </div>
       )}
