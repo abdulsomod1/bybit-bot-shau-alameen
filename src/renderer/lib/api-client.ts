@@ -17,6 +17,7 @@ export function getOwnerToken(): string {
 export function setOwnerToken(token: string): void {
   if (token) localStorage.setItem('owner_access_token', token);
   else localStorage.removeItem('owner_access_token');
+  window.dispatchEvent(new Event('owner-token-updated'));
 }
 
 /** Clear the stored owner access token */

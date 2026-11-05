@@ -1,7 +1,7 @@
 
 import { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
-import { getOwnerToken, setOwnerToken } from '../lib/api-client';
+import { apiBotState, getOwnerToken, setOwnerToken } from '../lib/api-client';
 
 type TestResult = {
   error?: string;
@@ -26,18 +26,24 @@ export default function Settings() {
   const [tokenSaved, setTokenSaved] = useState(false);
   const [tokenError, setTokenError] = useState('');
 
-  const saveToken = () => {
+  const saveToken = async () => {
     setTokenError('');
     if (!ownerToken.trim()) {
       setTokenError('Token cannot be empty.');
       return;
     }
-    setOwnerToken(ownerToken.trim());
-    setHasSavedToken(true);
-    setEditingToken(false);
-    setTokenSaved(true);
-    void fetchAll();
-    setTimeout(() => setTokenSaved(false), 3000);
+    const token = ownerToken.trim();
+    setOwnerToken(token);
+    try {
+      await apiBotState.get();
+      setHasSavedToken(true);
+      setEditingToken(false);
+      setTokenSaved(true);
+      await fetchAll();
+      setTimeout(() => setTokenSaved(false), 3000);
+    } catch (error) {
+      setTokenError(error instanceof Error ? error.message : 'The server rejected this token.');
+    }
   };
 
   const changeToken = () => {

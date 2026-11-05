@@ -148,11 +148,21 @@ describe('API availability reporting', () => {
     expect(src).toContain('does not match the token saved in this browser');
   });
 
-  test('saving owner token refreshes requests with the newly stored token', () => {
+  test('saving owner token verifies it with the server before reporting success', () => {
     const fs = require('fs');
     const src = fs.readFileSync('src/renderer/pages/Settings.tsx', 'utf-8');
-    expect(src).toContain('setOwnerToken(ownerToken.trim());');
-    expect(src).toContain('void fetchAll();');
-    expect(src).toContain('Token saved in this browser');
+    expect(src).toContain('setOwnerToken(token);');
+    expect(src).toContain('await apiBotState.get();');
+    expect(src).toContain('await fetchAll();');
+    expect(src).toContain('The server rejected this token.');
+  });
+
+  test('changing the owner token refreshes every API hook instance', () => {
+    const fs = require('fs');
+    const client = fs.readFileSync('src/renderer/lib/api-client.ts', 'utf-8');
+    const hook = fs.readFileSync('src/renderer/hooks/useApi.ts', 'utf-8');
+    expect(client).toContain("dispatchEvent(new Event('owner-token-updated'))");
+    expect(hook).toContain("addEventListener('owner-token-updated', fetchAll)");
+    expect(hook).toContain("removeEventListener('owner-token-updated', fetchAll)");
   });
 });

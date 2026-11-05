@@ -95,6 +95,12 @@ export function useApi() {
   // Auto-refetch when user changes
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
+  // Keep independent hook instances (App and Settings) in sync after token changes.
+  useEffect(() => {
+    window.addEventListener('owner-token-updated', fetchAll);
+    return () => window.removeEventListener('owner-token-updated', fetchAll);
+  }, [fetchAll]);
+
   const saveCredentials = useCallback(
     async (data: { apiKey: string; apiSecret: string }) => {
       const result = await apiCredentials.save(data.apiKey, data.apiSecret);
